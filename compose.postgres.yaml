@@ -1,0 +1,25 @@
+services:
+  relaxalpha:
+    environment:
+      Database__Provider: Postgres
+      ConnectionStrings__Market: "Host=postgres;Database=relaxalpha;Username=relaxalpha;Password=${POSTGRES_PASSWORD:?请在 .env 中配置 POSTGRES_PASSWORD}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: relaxalpha
+      POSTGRES_USER: relaxalpha
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?请在 .env 中配置 POSTGRES_PASSWORD}"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relaxalpha -d relaxalpha"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  postgres:

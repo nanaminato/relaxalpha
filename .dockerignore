@@ -1,0 +1,10 @@
+.git
+.idea
+.qa
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/.angular
+**/*.db*
+.env

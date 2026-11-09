@@ -1,0 +1,13 @@
+services:
+  relaxalpha:
+    build: .
+    ports:
+      - "127.0.0.1:${RELAXALPHA_PORT:-8080}:8080"
+    environment:
+      Database__Provider: Sqlite
+      ConnectionStrings__Market: Data Source=/data/relaxalpha.db
+    volumes:
+      - sqlite:/data
+
+volumes:
+  sqlite:
