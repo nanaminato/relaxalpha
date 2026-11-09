@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { Batch, DailyStatus, LiveQuoteBatch, MarketApi, MarketUniverse, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
+import { exchangeName, productName } from './product-names';
 
 const tabs = [
   {id: 'overview', number: '01', name: $localize`市场总览`},
@@ -34,6 +35,8 @@ class Dashboard {
   private liveVersion = 0;
 
   readonly tabs = tabs;
+  readonly exchangeName = exchangeName;
+  readonly productName = productName;
   readonly active = signal<Tab>('overview');
   readonly title = computed(() => tabs.find(tab => tab.id === this.active())!.name);
   readonly universe = signal<MarketUniverse>('OfficialDaily');
@@ -75,7 +78,10 @@ class Dashboard {
   readonly page = signal(0);
   readonly filtered = computed(() => {
     const text = this.search().trim().toUpperCase();
-    return this.quotes().filter(q => [q.symbol, q.underlying, q.exchange].some(code => code.includes(text)));
+    const quotes = this.quotes();
+    if (!text) return quotes;
+    return quotes.filter(q => [q.symbol, q.underlying, q.exchange, productName(q), exchangeName(q.exchange)]
+      .some(label => label.toUpperCase().includes(text)));
   });
   readonly chainPage = computed(() => this.filtered().slice(this.page() * 30, (this.page() + 1) * 30));
   readonly pageCount = computed(() => Math.max(1, Math.ceil(this.filtered().length / 30)));

@@ -68,6 +68,11 @@ th { background: #f3f6fa; color: #43536c; text-align: left; white-space: nowrap;
 td, th { padding: 11px 9px; border-bottom: 1px solid #e7edf4; vertical-align: top; }
 td { overflow-wrap: anywhere; }
 tr:last-child td { border-bottom: 0; }
+.contract-cell { min-width: 132px; }
+.contract-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.contract-title strong { font-size: 15px; color: var(--ink); }
+.contract-title span { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.contract-code { font-family: ui-monospace, Consolas, monospace; letter-spacing: .02em; }
 .empty { color: var(--muted); text-align: center; padding: 28px 8px; }
 .tag { display: inline-block; background: #e9f7f0; color: #176147; border-radius: 5px; padding: 3px 5px; font-size: 11px; }
 .tag.warn { background: #fff1d7; color: #7a4e09; }

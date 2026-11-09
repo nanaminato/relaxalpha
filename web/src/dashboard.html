@@ -78,16 +78,20 @@
         @case ('chain') {
           <section class="card">
             <div class="section-bar">
-              <input class="search" aria-label="搜索期权链" i18n-aria-label placeholder="搜索合约、标的或交易所" i18n-placeholder [ngModel]="search()" (ngModelChange)="searchChain($event)">
+              <input class="search" aria-label="搜索期权链" i18n-aria-label placeholder="搜索品种、合约或交易所" i18n-placeholder [ngModel]="search()" (ngModelChange)="searchChain($event)">
               <span class="muted" i18n>{{ filtered().length }} 条合约</span>
             </div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th i18n>期权合约</th><th i18n>到期 · 北京时间</th><th i18n>标的 / 行权价</th>@if (official()) { <th i18n>期权结算价</th> } @else { <th i18n>买价 / 卖价</th> }<th i18n>单手资金</th><th i18n>参考 IV</th><th i18n>成交 / 持仓</th><th i18n>质量与来源</th><th i18n>操作</th></tr></thead>
+                <thead><tr><th i18n>品种 / 合约</th><th i18n>到期 · 北京时间</th><th i18n>标的 / 行权价</th>@if (official()) { <th i18n>期权结算价</th> } @else { <th i18n>买价 / 卖价</th> }<th i18n>单手资金</th><th i18n>参考 IV</th><th i18n>成交 / 持仓</th><th i18n>质量与来源</th><th i18n>操作</th></tr></thead>
                 <tbody>
                   @for (q of chainPage(); track q.id) {
                     <tr>
-                      <td><b>{{ q.symbol }}</b><small>{{ q.exchange }} · {{ q.underlying }} · {{ sides[q.side] }}</small></td>
+                      <td class="contract-cell">
+                        <div class="contract-title"><strong>{{ productName(q) }}</strong><span>{{ sides[q.side] }}</span></div>
+                        <small class="contract-code">{{ q.symbol }}</small>
+                        <small>{{ exchangeName(q.exchange) }} · {{ q.underlying }}</small>
+                      </td>
                       <td>{{ q.expiryUtc | date:'yyyy-MM-dd HH:mm':'+0800' }}</td>
                       <td>{{ q.futuresPrice | number }} / {{ q.strike | number }}</td>
                       @if (official()) {
@@ -136,11 +140,15 @@
             @if (scan(); as result) {
               <div class="table-wrap">
                 <table>
-                  <thead><tr><th i18n>合约</th><th i18n>单手资金 / 本金风险</th><th i18n>目标到期价 / 变动</th><th i18n>冲击情景净回收 / 盈亏</th><th i18n>筛选依据与质量</th><th i18n>操作</th></tr></thead>
+                  <thead><tr><th i18n>品种 / 合约</th><th i18n>单手资金 / 本金风险</th><th i18n>目标到期价 / 变动</th><th i18n>冲击情景净回收 / 盈亏</th><th i18n>筛选依据与质量</th><th i18n>操作</th></tr></thead>
                   <tbody>
                     @for (item of result.opportunities; track item.quote.id) {
                       <tr>
-                        <td><b>{{ item.quote.symbol }}</b><small>{{ item.quote.exchange }} · {{ sides[item.quote.side] }} · {{ item.quote.expiryUtc | date:'MM-dd':'+0800' }}</small></td>
+                        <td class="contract-cell">
+                          <div class="contract-title"><strong>{{ productName(item.quote) }}</strong><span>{{ sides[item.quote.side] }}</span></div>
+                          <small class="contract-code">{{ item.quote.symbol }}</small>
+                          <small>{{ exchangeName(item.quote.exchange) }} · {{ item.quote.expiryUtc | date:'MM-dd':'+0800' }}</small>
+                        </td>
                         <td>¥{{ item.quote.entryCost | number:'1.2-2' }}<small i18n>期权腿最多损失全部开仓成本</small></td>
                         <td><b>{{ item.target.futuresPrice | number:'1.2-2' }}</b><small>{{ item.target.change | percent:'1.2-2' }}</small></td>
                         <td><b>{{ item.shockScenario.multiple | number:'1.2-2' }}×</b> / ¥{{ item.shockScenario.profit | number:'1.2-2' }}
@@ -166,7 +174,7 @@
               <label i18n>期权合约
                 <select [ngModel]="selected()?.id ?? null" [disabled]="busy()" (ngModelChange)="selectById($event)">
                   <option [ngValue]="null">请选择具有研究价格的合约</option>
-                  @for (q of quotable(); track q.id) { <option [ngValue]="q.id">{{ q.symbol }} · {{ q.exchange }}</option> }
+                  @for (q of quotable(); track q.id) { <option [ngValue]="q.id">{{ productName(q) }} · {{ sides[q.side] }} · {{ q.symbol }}</option> }
                 </select>
               </label>
               <label i18n>情景标的价格<input type="number" min="0" step="any" [(ngModel)]="futuresPrice"></label>
@@ -175,7 +183,7 @@
               <label i18n>目标净回收倍数（逗号分隔）<input [(ngModel)]="targets"></label>
             </div>
             @if (selected(); as q) {
-              <p class="muted" i18n>{{ q.symbol }} · {{ sourceLabel(q.kind, q.tradingDate) }} · 参考权利金 ¥{{ q.premium | number }} · 开仓 ¥{{ q.openFee | number }} / 平仓 ¥{{ q.closeFee | number }} / 行权 ¥{{ q.exerciseFee | number }}</p>
+              <p class="muted" i18n>{{ productName(q) }} · {{ sides[q.side] }} · {{ q.symbol }} · {{ sourceLabel(q.kind, q.tradingDate) }} · 参考权利金 ¥{{ q.premium | number }} · 开仓 ¥{{ q.openFee | number }} / 平仓 ¥{{ q.closeFee | number }} / 行权 ¥{{ q.exerciseFee | number }}</p>
             }
             <button class="primary" type="button" [disabled]="!selected() || busy()" (click)="runSimulation()" i18n>计算情景</button>
           </section>
@@ -198,7 +206,12 @@
                       <thead><tr><th i18n>合约</th><th i18n>行情时间 · 北京时间</th><th i18n>最新价</th><th i18n>买一 / 卖一</th><th i18n>成交 / 持仓</th></tr></thead>
                       <tbody>
                         @for (tick of feed.quotes; track tick.symbol) {
-                          <tr><td><b>{{ tick.symbol }}</b></td>
+                          <tr><td class="contract-cell">
+                            <div class="contract-title"><strong>{{ productName(q) }}</strong>
+                              @if ($first) { <span i18n>期权</span> } @else { <span i18n>标的期货</span> }
+                            </div>
+                            <small class="contract-code">{{ tick.symbol }}</small>
+                          </td>
                             @if (tick.state === 'ready') {
                               <td>{{ tick.quoteTime | date:'MM-dd HH:mm:ss':'+0800' }}
                                 @if (tick.stale) { <small i18n>旧行情</small> }
