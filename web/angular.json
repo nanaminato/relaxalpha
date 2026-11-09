@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "cli": {"analytics": false},
+  "projects": {
+    "relaxalpha": {
+      "projectType": "application",
+      "root": "",
+      "sourceRoot": "src",
+      "i18n": {"sourceLocale": "zh"},
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "src/main.ts",
+            "index": "src/index.html",
+            "polyfills": ["@angular/localize/init"],
+            "tsConfig": "tsconfig.json",
+            "outputPath": "dist/relaxalpha",
+            "styles": ["src/styles.css"]
+          },
+          "configurations": {
+            "production": {"outputHashing": "all"},
+            "development": {"optimization": false, "sourceMap": true}
+          },
+          "defaultConfiguration": "production"
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "options": {"buildTarget": "relaxalpha:build:development"}
+        },
+        "extract-i18n": {
+          "builder": "@angular/build:extract-i18n"
+        }
+      }
+    }
+  }
+}

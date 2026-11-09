@@ -1,0 +1,252 @@
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="RelaxAlpha">
+      <span class="brand-icon">α</span><span>Relax<span class="accent">Alpha</span><small i18n>期权研究工作台</small></span>
+    </a>
+    <div class="nav-label" i18n>研究空间</div>
+    <nav aria-label="研究空间" i18n-aria-label>
+      @for (tab of tabs; track tab.id) {
+        <button type="button" [class.current]="active() === tab.id" [attr.aria-current]="active() === tab.id ? 'page' : null"
+                (click)="navigate(tab.id)"><span>{{ tab.number }}</span>{{ tab.name }}</button>
+      }
+    </nav>
+    <div class="sidebar-foot"><span class="status-dot" [class.on]="connected()"></span>
+      @if (connected()) { <span i18n>数据更新通知已连接</span> }
+      @else { <span i18n>更新通知未连接</span> }
+    </div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <span class="eyebrow" i18n>中国商品期权 / 研究终端</span>
+      <div class="toolbar">
+        <div class="switch" aria-label="数据范围" i18n-aria-label>
+          <button type="button" [class.on]="!simulated()" [attr.aria-pressed]="!simulated()" [disabled]="busy()" (click)="changeUniverse(false)" i18n>导入行情</button>
+          <button type="button" [class.on]="simulated()" [attr.aria-pressed]="simulated()" [disabled]="busy()" (click)="changeUniverse(true)" i18n>模拟数据</button>
+        </div>
+        <button class="secondary" type="button" [disabled]="marketLoading()" (click)="refresh()" i18n>刷新</button>
+      </div>
+    </header>
+    <div class="content">
+      <h1>{{ title() }}</h1>
+      @if (simulated()) { <p class="banner demo" i18n>模拟数据视图。演示价格、合约与筛选结果均为虚构。</p> }
+      @if (marketError()) { <p class="banner error" role="alert">{{ marketError() }}</p> }
+      @if (error()) { <p class="banner error" role="alert">{{ error() }}</p> }
+      @if (notice()) { <p class="banner" role="status">{{ notice() }}</p> }
+
+      @switch (active()) {
+        @case ('overview') {
+          <p class="subtitle" i18n>从期权链出发，在给定预算下研究标的变动、流动性与潜在回报。</p>
+          <div class="metrics">
+            <article><span i18n>未到期期权</span><strong>{{ quotes().length | number }}</strong><small i18n>当前视图 · 最新快照</small></article>
+            <article><span i18n>标的期货</span><strong>{{ underlyings() | number }}</strong><small i18n>按交易所和标的去重</small></article>
+            <article><span i18n>双边报价</span><strong>{{ twoSided() | number }}</strong><small i18n>有效买卖价且未倒挂</small></article>
+            <article><span i18n>研究预算</span><strong>¥{{ settings.budget | number }}</strong><small i18n>单手权利金 + 开仓费</small></article>
+          </div>
+          <section class="card overview">
+            <div>
+              <span class="eyebrow" i18n>研究流程</span>
+              <h2 i18n>从一份行情快照开始</h2>
+              <p i18n>导入有使用权限的期权链，或加载独立演示数据。先检查盘口，再运行预算筛选和情景模拟。</p>
+              <div class="actions">
+                <button class="primary" type="button" (click)="navigate('sources')" i18n>导入 CSV</button>
+                <button class="secondary" type="button" [disabled]="busy()" (click)="loadDemo()" i18n>加载模拟数据</button>
+                <button class="secondary" type="button" [disabled]="busy()" (click)="runScan()" i18n>运行机会扫描</button>
+              </div>
+            </div>
+            <div class="overview-aside">
+              <span i18n>最近行情（北京时间）</span>
+              <strong>{{ (latestQuote() | date:'MM-dd HH:mm':'+0800') || '—' }}</strong>
+              <span i18n>默认策略定时扫描（非模拟）</span>
+              @if (scheduled(); as result) {
+                <strong>{{ result.asOfUtc | date:'MM-dd HH:mm':'+0800' }} · {{ result.matched }} <ng-container i18n>条命中</ng-container></strong>
+              } @else { <strong i18n>等待首轮扫描</strong> }
+            </div>
+          </section>
+        }
+        @case ('chain') {
+          <section class="card">
+            <div class="section-bar">
+              <input class="search" aria-label="搜索期权链" i18n-aria-label placeholder="搜索合约、标的或交易所" i18n-placeholder [ngModel]="search()" (ngModelChange)="searchChain($event)">
+              <span class="muted" i18n>{{ filtered().length }} 条合约</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th i18n>期权合约</th><th i18n>到期 · 北京时间</th><th i18n>标的 / 行权价</th><th i18n>买价 / 卖价</th><th i18n>单手资金</th><th i18n>中间价 IV</th><th i18n>成交 / 持仓</th><th i18n>质量与来源</th><th i18n>操作</th></tr></thead>
+                <tbody>
+                  @for (q of chainPage(); track q.id) {
+                    <tr>
+                      <td><b>{{ q.symbol }}</b><small>{{ q.exchange }} · {{ q.underlying }} · {{ sides[q.side] }}</small></td>
+                      <td>{{ q.expiryUtc | date:'yyyy-MM-dd HH:mm':'+0800' }}</td>
+                      <td>{{ q.futuresPrice | number }} / {{ q.strike | number }}</td>
+                      <td>{{ (q.bid | number) ?? '—' }} / {{ (q.ask | number) ?? '—' }}</td>
+                      <td>{{ (q.entryCost | number:'1.2-2') ?? '—' }}
+                        @if (q.premium !== null) { <small i18n>权利金 {{ q.premium | number }} + 开仓费 {{ q.openFee | number }}</small> }</td>
+                      <td>{{ (q.iv | percent:'1.1-2') ?? '—' }}</td>
+                      <td>{{ q.volume | number }} / {{ q.openInterest | number }}</td>
+                      <td><span class="tag" [class.warn]="q.quality !== 'TwoSided'">{{ qualities[q.quality] }}</span><small>{{ q.source }} · {{ q.observedAtUtc | date:'MM-dd HH:mm':'+0800' }}</small><small>{{ kinds[q.kind] }}</small></td>
+                      <td><button class="link-button" type="button" [disabled]="busy() || !q.ask || q.quality === 'Crossed'" (click)="openSimulation(q)" i18n>模拟</button></td>
+                    </tr>
+                  } @empty {
+                    <tr><td class="empty" colspan="9">
+                      @if (marketLoading()) { <span i18n>正在读取行情…</span> }
+                      @else { <span i18n>当前视图没有匹配的期权。可在数据源管理中导入。</span> }
+                    </td></tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            @if (pageCount() > 1) {
+              <div class="pager">
+                <button class="secondary" type="button" [disabled]="page() === 0" (click)="page.set(page() - 1)" i18n>上一页</button>
+                <span>{{ page() + 1 }} / {{ pageCount() }}</span>
+                <button class="secondary" type="button" [disabled]="page() + 1 >= pageCount()" (click)="page.set(page() + 1)" i18n>下一页</button>
+              </div>
+            }
+          </section>
+        }
+        @case ('ranking') {
+          <p class="subtitle" i18n>按达到目标所需的有利变动幅度排序。净回收倍数 = 扣除退出费用后的理论价值 ÷ 开仓资金。</p>
+          <section class="card">
+            <div class="section-bar">
+              @if (scan(); as result) {
+                <span class="muted" i18n>预算 ¥{{ result.settings.budget | number }} · 目标 {{ result.settings.targetMultiple }}× · 有利冲击 {{ result.settings.shock | percent }} · 评估 {{ result.evaluated }} · 命中 {{ result.matched }} · 展示 {{ result.opportunities.length }} · {{ result.asOfUtc | date:'MM-dd HH:mm':'+0800' }}</span>
+              } @else { <span class="muted" i18n>运行策略以生成结果</span> }
+              <div class="actions">
+                <button class="secondary" type="button" (click)="navigate('strategy')" i18n>编辑策略</button>
+                <button class="primary" type="button" [disabled]="busy()" (click)="runScan()" i18n>运行扫描</button>
+              </div>
+            </div>
+            @if (scan(); as result) {
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th i18n>合约</th><th i18n>单手资金 / 本金风险</th><th i18n>目标到期价 / 变动</th><th i18n>冲击情景净回收 / 盈亏</th><th i18n>筛选依据与质量</th><th i18n>操作</th></tr></thead>
+                  <tbody>
+                    @for (item of result.opportunities; track item.quote.id) {
+                      <tr>
+                        <td><b>{{ item.quote.symbol }}</b><small>{{ item.quote.exchange }} · {{ sides[item.quote.side] }} · {{ item.quote.expiryUtc | date:'MM-dd':'+0800' }}</small></td>
+                        <td>¥{{ item.quote.entryCost | number:'1.2-2' }}<small i18n>期权腿最多损失全部开仓成本</small></td>
+                        <td><b>{{ item.target.futuresPrice | number:'1.2-2' }}</b><small>{{ item.target.change | percent:'1.2-2' }}</small></td>
+                        <td><b>{{ item.shockScenario.multiple | number:'1.2-2' }}×</b> / ¥{{ item.shockScenario.profit | number:'1.2-2' }}
+                          <small>
+                            @if (item.reachesTarget) { <ng-container i18n>冲击情景达到目标</ng-container> }
+                            @else { <ng-container i18n>冲击情景未达到目标</ng-container> }
+                          </small>
+                        </td>
+                        <td><span class="tag" i18n>通过预算与流动性门槛</span><small i18n>IV {{ item.quote.iv | percent:'1.1-2' }} · 价差 {{ item.spreadRatio | percent:'1.1-2' }} · 量 {{ item.quote.volume }} / 仓 {{ item.quote.openInterest }}</small><small>{{ qualities[item.quote.quality] }} · {{ item.quote.source }} · {{ kinds[item.quote.kind] }}</small></td>
+                        <td><button class="link-button" type="button" [disabled]="busy()" (click)="openSimulation(item.quote)" i18n>模拟</button></td>
+                      </tr>
+                    } @empty { <tr><td class="empty" colspan="6" i18n>没有满足当前条件的合约。</td></tr> }
+                  </tbody>
+                </table>
+              </div>
+            }
+          </section>
+        }
+        @case ('simulator') {
+          <p class="subtitle" i18n>输入标的期货价格、剩余日历天数和年化波动率。剩余 0 天时按到期内在价值计算。</p>
+          <section class="card">
+            <div class="form-grid">
+              <label i18n>期权合约
+                <select [ngModel]="selected()?.id ?? null" [disabled]="busy()" (ngModelChange)="selectById($event)">
+                  <option [ngValue]="null">请选择有效卖价合约</option>
+                  @for (q of quotable(); track q.id) { <option [ngValue]="q.id">{{ q.symbol }} · {{ q.exchange }}</option> }
+                </select>
+              </label>
+              <label i18n>情景标的价格<input type="number" min="0" step="any" [(ngModel)]="futuresPrice"></label>
+              <label i18n>剩余天数<input type="number" min="0" step="any" [(ngModel)]="remainingDays"></label>
+              <label i18n>年化波动率（0.25 = 25%）<input type="number" min="0" max="5" step="0.01" [(ngModel)]="volatility"></label>
+              <label i18n>目标净回收倍数（逗号分隔）<input [(ngModel)]="targets"></label>
+            </div>
+            @if (selected(); as q) {
+              <p class="muted" i18n>{{ q.symbol }} · {{ kinds[q.kind] }} · 权利金 ¥{{ q.premium | number }} · 开仓 ¥{{ q.openFee | number }} / 平仓 ¥{{ q.closeFee | number }} / 行权 ¥{{ q.exerciseFee | number }}</p>
+            }
+            <button class="primary" type="button" [disabled]="!selected() || busy()" (click)="runSimulation()" i18n>计算情景</button>
+          </section>
+          @if (simulation(); as result) {
+            <div class="metrics result">
+              <article><span i18n>理论价格 / 报价单位</span><strong>{{ result.scenario.valuation.price | number:'1.2-4' }}</strong></article>
+              <article><span i18n>单手净退出价值</span><strong>¥{{ result.scenario.exitValue | number:'1.2-2' }}</strong><small i18n>已扣模型退出费 ¥{{ result.scenario.exitFee | number:'1.2-2' }}</small></article>
+              <article><span i18n>单手理论盈亏</span><strong>¥{{ result.scenario.profit | number:'1.2-2' }}</strong></article>
+              <article><span i18n>净回收倍数</span><strong>{{ result.scenario.multiple | number:'1.2-2' }}×</strong></article>
+            </div>
+            <section class="card">
+              <h2 i18n>目标条件与敏感度</h2>
+              <p class="muted">Δ {{ (result.scenario.valuation.delta | number:'1.0-6') ?? '—' }} · Γ {{ (result.scenario.valuation.gamma | number:'1.0-6') ?? '—' }} · Θ/日 {{ (result.scenario.valuation.thetaPerDay | number:'1.0-6') ?? '—' }} · Vega/百分点 {{ (result.scenario.valuation.vegaPerPoint | number:'1.0-6') ?? '—' }}</p>
+              <div class="table-wrap">
+                <table><thead><tr><th i18n>目标倍数</th><th i18n>标的期货临界价</th><th i18n>较观测价格变动</th></tr></thead>
+                  <tbody>@for (target of result.targets; track $index) {
+                    <tr><td>{{ target.multiple }}×</td>
+                      @if (target.condition; as condition) {
+                        <td>{{ condition.futuresPrice | number:'1.2-2' }}</td><td>{{ condition.change | percent:'1.2-2' }}</td>
+                      } @else { <td colspan="2" i18n>在非负标的价格范围内不可达</td> }
+                    </tr>
+                  }</tbody>
+                </table>
+              </div>
+            </section>
+          }
+        }
+        @case ('strategy') {
+          <p class="subtitle" i18n>默认预算 1,000 元，研究到期约 1–3 个月的合约。配置用于当前页面的手动扫描。</p>
+          <section class="card">
+            <div class="form-grid">
+              <label i18n>最大预算（元）<input type="number" min="1" step="0.01" [(ngModel)]="settings.budget"></label>
+              <label i18n>目标净回收倍数<input type="number" min="1" step="0.1" [(ngModel)]="settings.targetMultiple"></label>
+              <label i18n>最短到期天数<input type="number" min="0" [(ngModel)]="settings.minDays"></label>
+              <label i18n>最长到期天数<input type="number" min="0" [(ngModel)]="settings.maxDays"></label>
+              <label i18n>方向<select [(ngModel)]="settings.side"><option [ngValue]="null">全部</option><option value="Call">看涨</option><option value="Put">看跌</option></select></label>
+              <label i18n>最低 IV（小数）<input type="number" min="0" max="5" step="0.01" [(ngModel)]="settings.minIv"></label>
+              <label i18n>最高 IV（小数）<input type="number" min="0" max="5" step="0.01" [(ngModel)]="settings.maxIv"></label>
+              <label i18n>最低成交量（手）<input type="number" min="0" [(ngModel)]="settings.minVolume"></label>
+              <label i18n>最低持仓量（手）<input type="number" min="0" [(ngModel)]="settings.minOpenInterest"></label>
+              <label i18n>最大相对价差（小数）<input type="number" min="0" max="1" step="0.01" [(ngModel)]="settings.maxSpreadRatio"></label>
+              <label i18n>行情最大年龄（天）<input type="number" min="1" max="365" [(ngModel)]="settings.maxAgeDays"></label>
+              <label i18n>有利方向冲击幅度（小数）<input type="number" min="0" max="1" step="0.01" [(ngModel)]="settings.shock"></label>
+            </div>
+            <div class="actions">
+              <button class="primary" type="button" [disabled]="busy()" (click)="runScan()" i18n>应用并扫描</button>
+              <button class="secondary" type="button" (click)="resetSettings()" i18n>恢复默认</button>
+            </div>
+          </section>
+        }
+        @case ('sources') {
+          <p class="subtitle" i18n>只导入你有权用于研究的行情。来源类型为上传方申报，批次会保留观测及导入时间。</p>
+          <section class="card">
+            <h2 i18n>导入期权链 CSV</h2>
+            <div class="form-grid">
+              <label i18n>来源名称<input [(ngModel)]="source" maxlength="160" placeholder="如：供应商 / 文件编号"></label>
+              <label i18n>来源类型
+                <select [(ngModel)]="kind">
+                  <option value="UserProvided">{{ kinds.UserProvided }}</option>
+                  <option value="ExchangePublic">{{ kinds.ExchangePublic }}</option>
+                  <option value="Licensed">{{ kinds.Licensed }}</option>
+                  <option value="Simulated">{{ kinds.Simulated }}</option>
+                </select>
+              </label>
+              <label i18n>观测时间（浏览器本地时区）<input type="datetime-local" [(ngModel)]="observedAt"></label>
+              <label i18n>UTF-8 CSV（最多 4 MiB）<input type="file" accept=".csv,text/csv" (change)="selectFile($event)"></label>
+            </div>
+            <div class="actions">
+              <button class="primary" type="button" [disabled]="busy() || !file" (click)="upload()" i18n>导入数据</button>
+              <button class="secondary" type="button" [disabled]="busy()" (click)="loadDemo()" i18n>加载模拟数据</button>
+            </div>
+          </section>
+          <section class="card">
+            <h2 i18n>最近导入批次</h2>
+            <div class="table-wrap">
+              <table><thead><tr><th i18n>来源</th><th i18n>来源类型</th><th i18n>观测时间</th><th i18n>导入时间</th><th i18n>行数</th></tr></thead>
+                <tbody>@for (batch of batches(); track batch.id) {
+                  <tr><td><b>{{ batch.source }}</b></td><td>{{ kinds[batch.kind] }}</td>
+                    <td>{{ batch.observedAtUtc | date:'yyyy-MM-dd HH:mm:ss':'+0800' }}</td>
+                    <td>{{ batch.importedAtUtc | date:'yyyy-MM-dd HH:mm:ss':'+0800' }}</td><td>{{ batch.count }}</td></tr>
+                } @empty { <tr><td class="empty" colspan="5" i18n>还没有导入批次。</td></tr> }</tbody>
+              </table>
+            </div>
+          </section>
+        }
+      }
+      <footer i18n>模型仅供研究。理论倍数不代表实现概率。国内商品期权到期行权可能形成期货持仓，并产生保证金和进一步损益。</footer>
+    </div>
+  </main>
+</div>
