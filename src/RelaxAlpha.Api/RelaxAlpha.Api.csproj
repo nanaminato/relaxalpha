@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../RelaxAlpha.Infrastructure/RelaxAlpha.Infrastructure.csproj" />
+    <ProjectReference Include="../RelaxAlpha.Worker/RelaxAlpha.Worker.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

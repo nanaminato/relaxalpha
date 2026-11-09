@@ -1,0 +1,13 @@
+[Bb]in/
+[Oo]bj/
+.idea/
+.qa/
+.vs/
+.angular/
+node_modules/
+dist/
+TestResults/
+*.db
+*.db-shm
+*.db-wal
+.env

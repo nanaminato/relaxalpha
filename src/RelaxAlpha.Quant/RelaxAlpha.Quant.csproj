@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../RelaxAlpha.Domain/RelaxAlpha.Domain.csproj" />
+    <PackageReference Include="MathNet.Numerics.Signed" Version="5.0.0" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../RelaxAlpha.Quant/RelaxAlpha.Quant.csproj" />
+  </ItemGroup>
+</Project>

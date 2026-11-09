@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../RelaxAlpha.Application/RelaxAlpha.Application.csproj" />
+    <PackageReference Include="Quartz.Extensions.Hosting" Version="3.20.1" />
+  </ItemGroup>
+</Project>
