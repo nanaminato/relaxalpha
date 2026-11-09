@@ -42,7 +42,12 @@ namespace RelaxAlpha.Infrastructure.Migrations.Sqlite
                         .HasMaxLength(160)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateOnly?>("TradingDate")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("TradingDate");
 
                     b.HasIndex("Kind", "Source", "ObservedAtUtc", "ContentHash")
                         .IsUnique();
@@ -94,6 +99,9 @@ namespace RelaxAlpha.Infrastructure.Migrations.Sqlite
                     b.Property<int>("Quality")
                         .HasColumnType("INTEGER");
 
+                    b.Property<decimal?>("SettlementPrice")
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("Side")
                         .HasColumnType("INTEGER");
 
@@ -121,6 +129,45 @@ namespace RelaxAlpha.Infrastructure.Migrations.Sqlite
                         .IsUnique();
 
                     b.ToTable("Quotes");
+                });
+
+            modelBuilder.Entity("RelaxAlpha.Infrastructure.OfficialDailyImport", b =>
+                {
+                    b.Property<string>("Source")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("TradingDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("BatchId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Contracts")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("Failure")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Fees")
+                        .HasColumnType("BLOB");
+
+                    b.Property<byte[]>("Futures")
+                        .HasColumnType("BLOB");
+
+                    b.Property<DateTime>("LastAttemptUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Options")
+                        .HasColumnType("BLOB");
+
+                    b.Property<DateTime>("RetryAfterUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Source", "TradingDate");
+
+                    b.ToTable("DailyImports");
                 });
 
             modelBuilder.Entity("RelaxAlpha.Domain.OptionQuote", b =>

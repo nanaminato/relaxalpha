@@ -12,22 +12,23 @@ public interface IMarketStore
 {
     Task<BatchSummary> SaveAsync(ImportBatch batch, CancellationToken cancellationToken);
     Task<IReadOnlyList<BatchSummary>> SourcesAsync(CancellationToken cancellationToken);
-    Task<IReadOnlyList<OptionQuote>> LatestAsync(bool simulated, DateTime asOf, CancellationToken cancellationToken);
+    Task<IReadOnlyList<OptionQuote>> LatestAsync(MarketUniverse universe, DateTime asOf, DateOnly? tradingDate, CancellationToken cancellationToken);
     Task<OptionQuote?> FindAsync(long id, CancellationToken cancellationToken);
 }
 
 public sealed record SourceInfo(string Source, SourceKind Kind, DateTime ObservedAtUtc);
-public sealed record BatchSummary(Guid Id, string Source, SourceKind Kind, DateTime ObservedAtUtc, DateTime ImportedAtUtc, int Count);
+public sealed record BatchSummary(Guid Id, string Source, SourceKind Kind, DateTime ObservedAtUtc, DateTime ImportedAtUtc, int Count, DateOnly? TradingDate);
 public sealed record MarketQuote(
     long Id, string Exchange, string Symbol, string Underlying, DateTime ExpiryUtc, OptionSide Side,
     decimal Strike, decimal FuturesPrice, decimal Multiplier, decimal OpenFee, decimal CloseFee, decimal ExerciseFee,
     decimal? Bid, decimal? Ask, decimal? Premium, decimal? EntryCost, int Volume, int OpenInterest,
-    QuoteQuality Quality, string Source, SourceKind Kind, DateTime ObservedAtUtc, double? Iv)
+    QuoteQuality Quality, string Source, SourceKind Kind, DateTime ObservedAtUtc, double? Iv,
+    decimal? SettlementPrice, DateOnly? TradingDate)
 {
     public static MarketQuote From(OptionQuote q) => new(q.Id, q.Exchange, q.Symbol, q.Underlying, q.ExpiryUtc,
         q.Side, q.Strike, q.FuturesPrice, q.Multiplier, q.OpenFee, q.CloseFee, q.ExerciseFee, q.Bid, q.Ask,
         q.Premium, q.EntryCost, q.Volume, q.OpenInterest, q.Quality, q.Batch.Source, q.Batch.Kind,
-        q.Batch.ObservedAtUtc, OptionResearch.ImpliedVolatility(q, q.Batch.ObservedAtUtc));
+        q.Batch.ObservedAtUtc, OptionResearch.ImpliedVolatility(q, q.Batch.ObservedAtUtc), q.SettlementPrice, q.Batch.TradingDate);
 }
 
 public sealed record ScanSettings
@@ -44,11 +45,18 @@ public sealed record ScanSettings
     public decimal MaxSpreadRatio { get; init; } = 0.3m;
     public int MaxAgeDays { get; init; } = 3;
     public double Shock { get; init; } = 0.1;
-    public bool Simulated { get; init; }
+    public bool? Simulated { get; init; }
+    public MarketUniverse? Universe { get; init; }
+    public MarketUniverse SelectedUniverse => Universe ?? (Simulated switch
+    {
+        true => MarketUniverse.Simulated,
+        false => MarketUniverse.Imported,
+        null => MarketUniverse.OfficialDaily
+    });
 
     public void Validate()
     {
-        if (Budget is <= 0 or > 1_000_000_000 || !(TargetMultiple is >= 1 and <= 1000) ||
+        if (!Enum.IsDefined(SelectedUniverse) || Budget is <= 0 or > 1_000_000_000 || !(TargetMultiple is >= 1 and <= 1000) ||
             MinDays < 0 || MaxDays < MinDays || MaxDays > 730 ||
             !(MinIv >= 0 && MaxIv >= MinIv && MaxIv <= Black76.MaxVolatility) ||
             MinVolume < 0 || MinOpenInterest < 0 || MaxSpreadRatio is < 0 or > 1 ||
@@ -57,34 +65,43 @@ public sealed record ScanSettings
     }
 }
 
-public sealed record Opportunity(MarketQuote Quote, decimal SpreadRatio, Target Target, Scenario ShockScenario, bool ReachesTarget);
+public sealed record Opportunity(MarketQuote Quote, decimal? SpreadRatio, Target Target, Scenario ShockScenario, bool ReachesTarget);
 public sealed record ScanResult(DateTime AsOfUtc, ScanSettings Settings, int Evaluated, int Matched, IReadOnlyList<Opportunity> Opportunities);
 public sealed record SimulationInput(long QuoteId, double FuturesPrice, double RemainingDays, double Volatility, double[]? Targets);
 public sealed record TargetResult(double Multiple, Target? Condition);
 public sealed record SimulationResult(Scenario Scenario, IReadOnlyList<TargetResult> Targets);
 
-public sealed class MarketResearch(IMarketStore store, TimeProvider time)
+public sealed class MarketResearch(IMarketStore store, TimeProvider time, ExchangeTradingCalendar calendar)
 {
-    public Task<IReadOnlyList<OptionQuote>> LatestAsync(bool simulated, CancellationToken ct) =>
-        store.LatestAsync(simulated, time.GetUtcNow().UtcDateTime, ct);
+    public Task<IReadOnlyList<OptionQuote>> LatestAsync(MarketUniverse universe, CancellationToken ct) =>
+        LatestAtAsync(universe, time.GetUtcNow().UtcDateTime, ct);
+
+    private Task<IReadOnlyList<OptionQuote>> LatestAtAsync(MarketUniverse universe, DateTime now, CancellationToken ct)
+    {
+        var tradingDate = universe == MarketUniverse.OfficialDaily ? calendar.PreviousTradingDay(now) : null;
+        return store.LatestAsync(universe, now, tradingDate, ct);
+    }
 
     public async Task<ScanResult> ScanAsync(ScanSettings settings, CancellationToken ct)
     {
         settings.Validate();
         var now = time.GetUtcNow().UtcDateTime;
-        var quotes = await store.LatestAsync(settings.Simulated, now, ct);
+        var universe = settings.SelectedUniverse;
+        var daily = universe == MarketUniverse.OfficialDaily;
+        var quotes = await LatestAtAsync(universe, now, ct);
         var opportunities = new List<Opportunity>();
         foreach (var quote in quotes)
         {
             var days = (quote.ExpiryUtc - now).TotalDays;
             if (days < settings.MinDays || days > settings.MaxDays ||
                 (settings.Side is { } side && side != quote.Side) ||
-                quote.Batch.ObservedAtUtc < now.AddDays(-settings.MaxAgeDays) ||
-                quote.Quality != QuoteQuality.TwoSided || quote.EntryCost > settings.Budget ||
+                (!daily && quote.Batch.ObservedAtUtc < now.AddDays(-settings.MaxAgeDays)) ||
+                quote.Quality != (daily ? QuoteQuality.DailySettlement : QuoteQuality.TwoSided) ||
+                quote.EntryCost is not { } entryCost || entryCost > settings.Budget ||
                 quote.Volume < settings.MinVolume || quote.OpenInterest < settings.MinOpenInterest)
                 continue;
 
-            var spread = (quote.Ask!.Value - quote.Bid!.Value) / quote.Ask.Value;
+            decimal? spread = daily ? null : (quote.Ask!.Value - quote.Bid!.Value) / quote.Ask.Value;
             if (spread > settings.MaxSpreadRatio) continue;
 
             var data = MarketQuote.From(quote);
@@ -110,12 +127,12 @@ public sealed class MarketResearch(IMarketStore store, TimeProvider time)
 
         var remaining = (quote.ExpiryUtc - time.GetUtcNow().UtcDateTime).TotalDays;
         var targets = input.Targets ?? [2, 5, 10];
-        if (quote.Ask is not > 0 || quote.Quality == QuoteQuality.Crossed ||
+        if (quote.EntryPrice is not > 0 || quote.Quality == QuoteQuality.Crossed ||
             !(input.FuturesPrice is >= 0 and <= 1_000_000_000) ||
             !(input.RemainingDays >= 0 && input.RemainingDays <= Math.Min(730, remaining)) ||
             !(input.Volatility is >= 0 and <= Black76.MaxVolatility) ||
             targets.Length > 20 || targets.Any(x => !(x is >= 1 and <= 1000)))
-            throw new ArgumentException("模拟需要未到期合约、有效卖价及有效情景参数。");
+            throw new ArgumentException("模拟需要未到期合约、有效研究价格及有效情景参数。");
 
         var scenario = OptionResearch.Simulate(quote, input.FuturesPrice, input.RemainingDays, input.Volatility);
         return new(scenario, targets.Select(m =>

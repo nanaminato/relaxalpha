@@ -22,7 +22,7 @@ public sealed class MarketFlowTests
             .UseSqlite(connection).Options);
         await db.Database.MigrateAsync();
         var store = new EfMarketStore(db);
-        var research = new MarketResearch(store, clock);
+        var research = new MarketResearch(store, clock, new(ExchangeTradingCalendar.PublishedThrough, []));
         var parser = new CsvMarketDataSource(clock);
         var good = Row("M-C-3400", "C", 3400, "17", "20");
         var data = string.Join('\n', good, Row("M-P-2900", "P", 2900, "34", "39"),
@@ -41,16 +41,16 @@ public sealed class MarketFlowTests
         var sources = await store.SourcesAsync(default);
         Assert.Equal(3, sources.Count);
         Assert.Equal(8, sources.Single(b => b.Id == first.Id).Count);
-        var result = await research.ScanAsync(new(), default);
+        var result = await research.ScanAsync(new() { Universe = MarketUniverse.Imported }, default);
         Assert.Equal(9, result.Evaluated);
         Assert.Equal(2, result.Matched);
         Assert.All(result.Opportunities, o => Assert.Equal(SourceKind.ExchangePublic, o.Quote.Kind));
         Assert.Single((await research.ScanAsync(new() { Simulated = true }, default)).Opportunities);
-        Assert.Single((await research.ScanAsync(new() { Side = OptionSide.Put }, default)).Opportunities);
-        Assert.Empty((await research.ScanAsync(new() { Budget = 201 }, default)).Opportunities);
-        Assert.Empty((await research.ScanAsync(new() { MinIv = 0.9 }, default)).Opportunities);
+        Assert.Single((await research.ScanAsync(new() { Universe = MarketUniverse.Imported, Side = OptionSide.Put }, default)).Opportunities);
+        Assert.Empty((await research.ScanAsync(new() { Universe = MarketUniverse.Imported, Budget = 201 }, default)).Opportunities);
+        Assert.Empty((await research.ScanAsync(new() { Universe = MarketUniverse.Imported, MinIv = 0.9 }, default)).Opportunities);
 
-        var latest = await research.LatestAsync(false, default);
+        var latest = await research.LatestAsync(MarketUniverse.Imported, default);
         Assert.Equal(QuoteQuality.Crossed, latest.Single(q => q.Symbol == "M-C-CROSSED").Quality);
         Assert.Equal(QuoteQuality.Indicative, latest.Single(q => q.Symbol == "M-P-NOBID").Quality);
         var selected = latest.Single(q => q.Symbol == "M-C-3400");
@@ -74,7 +74,7 @@ public sealed class MarketFlowTests
         var older = new SourceInfo("来源 B", SourceKind.UserProvided, Now.AddMinutes(-5));
         await store.SaveAsync(await Read(parser, recent, Row("M-C-3400", "C", 3400, "18", "22")), default);
         await store.SaveAsync(await Read(parser, older, Row("M-C-3400", "C", 3400, "17", "20")), default);
-        Assert.Equal(22, Assert.Single(await store.LatestAsync(false, Now, default)).Ask);
+        Assert.Equal(22, Assert.Single(await store.LatestAsync(MarketUniverse.Imported, Now, null, default)).Ask);
     }
 
     [Fact]

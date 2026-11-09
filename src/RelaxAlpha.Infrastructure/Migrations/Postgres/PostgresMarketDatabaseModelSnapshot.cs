@@ -47,7 +47,12 @@ namespace RelaxAlpha.Infrastructure.Migrations.Postgres
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)");
 
+                    b.Property<DateOnly?>("TradingDate")
+                        .HasColumnType("date");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("TradingDate");
 
                     b.HasIndex("Kind", "Source", "ObservedAtUtc", "ContentHash")
                         .IsUnique();
@@ -101,6 +106,9 @@ namespace RelaxAlpha.Infrastructure.Migrations.Postgres
                     b.Property<int>("Quality")
                         .HasColumnType("integer");
 
+                    b.Property<decimal?>("SettlementPrice")
+                        .HasColumnType("numeric");
+
                     b.Property<int>("Side")
                         .HasColumnType("integer");
 
@@ -128,6 +136,45 @@ namespace RelaxAlpha.Infrastructure.Migrations.Postgres
                         .IsUnique();
 
                     b.ToTable("Quotes");
+                });
+
+            modelBuilder.Entity("RelaxAlpha.Infrastructure.OfficialDailyImport", b =>
+                {
+                    b.Property<string>("Source")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateOnly>("TradingDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid?>("BatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("Contracts")
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("Failure")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<byte[]>("Fees")
+                        .HasColumnType("bytea");
+
+                    b.Property<byte[]>("Futures")
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTime>("LastAttemptUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<byte[]>("Options")
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTime>("RetryAfterUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Source", "TradingDate");
+
+                    b.ToTable("DailyImports");
                 });
 
             modelBuilder.Entity("RelaxAlpha.Domain.OptionQuote", b =>

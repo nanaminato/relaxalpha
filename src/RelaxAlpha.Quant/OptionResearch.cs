@@ -12,15 +12,19 @@ public static class OptionResearch
 
     public static double? ImpliedVolatility(OptionQuote quote, DateTime asOf)
     {
-        if (quote.Quality != QuoteQuality.TwoSided) return null;
-        return Black76.ImpliedVolatility(quote.Side, (double)quote.FuturesPrice, (double)quote.Strike,
-            Math.Max(0, (quote.ExpiryUtc - asOf).TotalDays) / Black76.DaysPerYear, Rate,
-            (double)((quote.Ask!.Value + quote.Bid!.Value) / 2));
+        decimal? price = quote.Quality switch
+        {
+            QuoteQuality.TwoSided => (quote.Ask + quote.Bid) / 2,
+            QuoteQuality.DailySettlement => quote.SettlementPrice,
+            _ => null
+        };
+        return price is > 0 ? Black76.ImpliedVolatility(quote.Side, (double)quote.FuturesPrice, (double)quote.Strike,
+            Math.Max(0, (quote.ExpiryUtc - asOf).TotalDays) / Black76.DaysPerYear, Rate, (double)price.Value) : null;
     }
 
     public static Scenario Simulate(OptionQuote quote, double futures, double days, double volatility)
     {
-        var entry = (double)(quote.EntryCost ?? throw new ArgumentException("模拟需要有效卖价。"));
+        var entry = (double)(quote.EntryCost ?? throw new ArgumentException("模拟需要有效研究价格。"));
         var value = Black76.Evaluate(quote.Side, futures, (double)quote.Strike, days / Black76.DaysPerYear, Rate, volatility);
         var gross = value.Price * (double)quote.Multiplier;
         var fee = Math.Min(gross, (double)(days == 0 ? quote.ExerciseFee : quote.CloseFee));
@@ -30,7 +34,7 @@ public static class OptionResearch
 
     public static Target? RequiredMove(OptionQuote quote, double multiple, double days, double volatility)
     {
-        var entry = (double)(quote.EntryCost ?? throw new ArgumentException("目标分析需要有效卖价。"));
+        var entry = (double)(quote.EntryCost ?? throw new ArgumentException("目标分析需要有效研究价格。"));
         var strike = (double)quote.Strike;
         var reference = (double)quote.FuturesPrice;
         var requiredPremium = (entry * multiple + (double)(days == 0 ? quote.ExerciseFee : quote.CloseFee)) /

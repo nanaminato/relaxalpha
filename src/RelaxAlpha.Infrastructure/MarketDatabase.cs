@@ -9,14 +9,22 @@ public abstract class MarketDatabase(DbContextOptions options) : DbContext(optio
 {
     public DbSet<ImportBatch> Batches => Set<ImportBatch>();
     public DbSet<OptionQuote> Quotes => Set<OptionQuote>();
+    public DbSet<OfficialDailyImport> DailyImports => Set<OfficialDailyImport>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<OfficialDailyImport>(daily =>
+        {
+            daily.HasKey(x => new { x.Source, x.TradingDate });
+            daily.Property(x => x.Source).HasMaxLength(16);
+            daily.Property(x => x.Failure).HasMaxLength(300);
+        });
         modelBuilder.Entity<ImportBatch>(batch =>
         {
             batch.HasIndex(x => new { x.Kind, x.Source, x.ObservedAtUtc, x.ContentHash }).IsUnique();
             batch.Property(x => x.Source).HasMaxLength(160);
             batch.Property(x => x.ContentHash).HasMaxLength(64);
+            batch.HasIndex(x => x.TradingDate);
         });
         modelBuilder.Entity<OptionQuote>(quote =>
         {
@@ -55,17 +63,27 @@ public sealed class EfMarketStore(MarketDatabase db) : IMarketStore
             return existing;
         }
 
-        return new(batch.Id, batch.Source, batch.Kind, batch.ObservedAtUtc, batch.ImportedAtUtc, batch.Quotes.Count);
+        return new(batch.Id, batch.Source, batch.Kind, batch.ObservedAtUtc, batch.ImportedAtUtc, batch.Quotes.Count, batch.TradingDate);
     }
 
     public async Task<IReadOnlyList<BatchSummary>> SourcesAsync(CancellationToken cancellationToken) =>
         await db.Batches.AsNoTracking().OrderByDescending(x => x.ImportedAtUtc).ThenBy(x => x.Id).Take(100)
             .Select(Summary).ToListAsync(cancellationToken);
 
-    public async Task<IReadOnlyList<OptionQuote>> LatestAsync(bool simulated, DateTime asOf, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<OptionQuote>> LatestAsync(
+        MarketUniverse universe, DateTime asOf, DateOnly? tradingDate, CancellationToken cancellationToken)
     {
-        var universe = db.Quotes.AsNoTracking().Where(q => (q.Batch.Kind == SourceKind.Simulated) == simulated);
-        return await universe.Where(q => q.ExpiryUtc > asOf && !universe.Any(other =>
+        var quotes = db.Quotes.AsNoTracking();
+        if (universe == MarketUniverse.OfficialDaily)
+        {
+            if (tradingDate is null) return [];
+            return await quotes.Where(q => q.Batch.TradingDate == tradingDate && q.ExpiryUtc > asOf)
+                .Include(q => q.Batch).OrderBy(q => q.Exchange).ThenBy(q => q.Symbol).ToListAsync(cancellationToken);
+        }
+
+        var simulated = universe == MarketUniverse.Simulated;
+        quotes = quotes.Where(q => q.Batch.TradingDate == null && (q.Batch.Kind == SourceKind.Simulated) == simulated);
+        return await quotes.Where(q => q.ExpiryUtc > asOf && !quotes.Any(other =>
                 other.Exchange == q.Exchange && other.Symbol == q.Symbol &&
                 (other.Batch.ObservedAtUtc > q.Batch.ObservedAtUtc ||
                  (other.Batch.ObservedAtUtc == q.Batch.ObservedAtUtc && other.Id > q.Id))))
@@ -76,5 +94,5 @@ public sealed class EfMarketStore(MarketDatabase db) : IMarketStore
         db.Quotes.AsNoTracking().Include(q => q.Batch).SingleOrDefaultAsync(q => q.Id == id, cancellationToken);
 
     private static readonly Expression<Func<ImportBatch, BatchSummary>> Summary =
-        b => new(b.Id, b.Source, b.Kind, b.ObservedAtUtc, b.ImportedAtUtc, b.Quotes.Count);
+        b => new(b.Id, b.Source, b.Kind, b.ObservedAtUtc, b.ImportedAtUtc, b.Quotes.Count, b.TradingDate);
 }

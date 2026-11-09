@@ -37,6 +37,18 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IMarketStore, EfMarketStore>();
 builder.Services.AddScoped<IMarketDataSource, CsvMarketDataSource>();
 builder.Services.AddScoped<MarketResearch>();
+var dailyOptions = builder.Configuration.GetSection("ExchangeDaily").Get<ExchangeDailyOptions>() ?? new();
+builder.Services.AddSingleton(dailyOptions);
+builder.Services.AddSingleton(new ExchangeTradingCalendar(
+    dailyOptions.CalendarThrough ?? ExchangeTradingCalendar.PublishedThrough, dailyOptions.AdditionalClosures));
+builder.Services.AddHttpClient<ShfeDailyReports>(http =>
+{
+    http.Timeout = TimeSpan.FromSeconds(30);
+    http.MaxResponseContentBufferSize = ShfeDailyReports.MaxFileBytes;
+    http.DefaultRequestHeaders.UserAgent.ParseAdd("RelaxAlpha/0.1");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddScoped<IExchangeDailyIngestion, ShfeDailyIngestion>();
+builder.Services.AddSingleton<IMarketUpdates, SignalRMarketUpdates>();
 builder.Services.AddSingleton<ScheduledScan>();
 builder.Services.AddQuartz(q =>
 {
@@ -44,6 +56,14 @@ builder.Services.AddQuartz(q =>
     q.AddJob<MarketScanJob>(o => o.WithIdentity(key));
     q.AddTrigger(o => o.ForJob(key).WithIdentity("market-scan-5min").StartNow()
         .WithSimpleSchedule(s => s.WithIntervalInMinutes(5).RepeatForever()));
+
+    if (dailyOptions.Enabled)
+    {
+        var dailyKey = new JobKey("exchange-daily");
+        q.AddJob<ExchangeDailyJob>(o => o.WithIdentity(dailyKey));
+        q.AddTrigger(o => o.ForJob(dailyKey).WithIdentity("exchange-daily-hourly").StartNow()
+            .WithSimpleSchedule(s => s.WithIntervalInHours(1).RepeatForever()));
+    }
 });
 builder.Services.AddQuartzHostedService(o => o.WaitForJobsToComplete = true);
 
@@ -59,13 +79,17 @@ await using (var scope = app.Services.CreateAsyncScope())
 
 var api = app.MapGroup("/api");
 api.MapGet("/health", () => TypedResults.Ok(new { status = "ok" }));
-api.MapGet("/market", async (bool? simulated, MarketResearch research, CancellationToken ct) =>
+api.MapGet("/market", async (MarketUniverse? universe, bool? simulated, MarketResearch research, CancellationToken ct) =>
 {
-    var quotes = await research.LatestAsync(simulated ?? false, ct);
-    return TypedResults.Ok(quotes.Select(MarketQuote.From).ToArray());
+    var selection = new ScanSettings { Universe = universe, Simulated = simulated }.SelectedUniverse;
+    if (!Enum.IsDefined(selection)) return Results.Problem("无效的行情范围。", statusCode: 400);
+    var quotes = await research.LatestAsync(selection, ct);
+    return Results.Ok(quotes.Select(MarketQuote.From).ToArray());
 });
 api.MapGet("/sources", async (IMarketStore store, CancellationToken ct) =>
     TypedResults.Ok(await store.SourcesAsync(ct)));
+api.MapGet("/sources/daily", async (IExchangeDailyIngestion daily, CancellationToken ct) =>
+    TypedResults.Ok(await daily.StatusAsync(ct)));
 api.MapGet("/scans/scheduled", (ScheduledScan scan) => TypedResults.Ok(scan.Latest));
 api.MapPost("/scans", async (ScanSettings settings, MarketResearch research, CancellationToken ct) =>
 {
@@ -82,7 +106,7 @@ api.MapPost("/simulate", async (SimulationInput input, MarketResearch research, 
     catch (ArgumentException error) { return Results.Problem(error.Message, statusCode: 400); }
 });
 api.MapPost("/sources/import", async (string source, string kind, string observedAt, HttpRequest request,
-    IMarketDataSource parser, IMarketStore store, IHubContext<MarketHub> hub, CancellationToken ct) =>
+    IMarketDataSource parser, IMarketStore store, IMarketUpdates updates, CancellationToken ct) =>
 {
     if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var type) || !type.MediaType.Equals("text/csv"))
         return Results.Problem("请使用 text/csv 上传 UTF-8 文件。", statusCode: 415);
@@ -92,10 +116,10 @@ api.MapPost("/sources/import", async (string source, string kind, string observe
         !CsvMarketDataSource.TryTimestamp(observedAt, out var observed))
         return Results.Problem("请填写有效的来源类型和带时区的行情时间。", statusCode: 400);
 
-    return await Import(request.Body, new(source, Enum.Parse<SourceKind>(kind, true), observed), parser, store, hub, ct);
+    return await Import(request.Body, new(source, Enum.Parse<SourceKind>(kind, true), observed), parser, store, updates, ct);
 });
 api.MapPost("/sources/demo", async (HttpRequest request, TimeProvider clock, IMarketDataSource parser, IMarketStore store,
-    IHubContext<MarketHub> hub, CancellationToken ct) =>
+    IMarketUpdates updates, CancellationToken ct) =>
 {
     if (!request.HasJsonContentType()) return Results.StatusCode(415);
     var observed = clock.GetUtcNow().UtcDateTime.Date;
@@ -109,7 +133,7 @@ api.MapPost("/sources/demo", async (HttpRequest request, TimeProvider clock, IMa
         SHFE,DEMO-RB-P-3200,DEMO-RB,{expiry},P,3200,3500,10,3,3,3,0,24,6,22
         """;
     using var input = new MemoryStream(Encoding.UTF8.GetBytes(csv));
-    return await Import(input, new("RelaxAlpha 演示", SourceKind.Simulated, observed), parser, store, hub, ct);
+    return await Import(input, new("RelaxAlpha 演示", SourceKind.Simulated, observed), parser, store, updates, ct);
 });
 
 app.MapHub<MarketHub>("/hubs/market");
@@ -117,16 +141,22 @@ app.MapFallbackToFile("index.html");
 app.Run();
 
 static async Task<IResult> Import(Stream input, SourceInfo source, IMarketDataSource parser, IMarketStore store,
-    IHubContext<MarketHub> hub, CancellationToken ct)
+    IMarketUpdates updates, CancellationToken ct)
 {
     try
     {
         var batch = await parser.ReadAsync(input, source, ct);
         var summary = await store.SaveAsync(batch, ct);
-        await hub.Clients.All.SendAsync("MarketUpdated", summary, ct);
+        await updates.PublishAsync(summary, ct);
         return Results.Ok(summary);
     }
     catch (InvalidDataException error) { return Results.Problem(error.Message, statusCode: 400); }
 }
 
 public sealed class MarketHub : Hub;
+
+public sealed class SignalRMarketUpdates(IHubContext<MarketHub> hub) : IMarketUpdates
+{
+    public Task PublishAsync(BatchSummary summary, CancellationToken ct) =>
+        hub.Clients.All.SendAsync("MarketUpdated", summary, ct);
+}

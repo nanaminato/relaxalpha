@@ -2,7 +2,8 @@ namespace RelaxAlpha.Domain;
 
 public enum OptionSide { Call, Put }
 public enum SourceKind { UserProvided, ExchangePublic, Licensed, Simulated }
-public enum QuoteQuality { TwoSided, Indicative, Crossed }
+public enum QuoteQuality { TwoSided, Indicative, Crossed, DailySettlement }
+public enum MarketUniverse { OfficialDaily, Imported, Simulated }
 
 public sealed class ImportBatch
 {
@@ -10,6 +11,7 @@ public sealed class ImportBatch
     public required string Source { get; init; }
     public required SourceKind Kind { get; init; }
     public required string ContentHash { get; init; }
+    public DateOnly? TradingDate { get; init; }
     public required DateTime ObservedAtUtc { get; init; }
     public required DateTime ImportedAtUtc { get; init; }
     public List<OptionQuote> Quotes { get; init; } = [];
@@ -33,9 +35,11 @@ public sealed class OptionQuote
     public required decimal ExerciseFee { get; init; }
     public decimal? Bid { get; init; }
     public decimal? Ask { get; init; }
+    public decimal? SettlementPrice { get; init; }
     public required int Volume { get; init; }
     public required int OpenInterest { get; init; }
     public required QuoteQuality Quality { get; init; }
-    public decimal? Premium => Ask > 0 ? Ask * Multiplier : null;
+    public decimal? EntryPrice => Quality == QuoteQuality.DailySettlement ? SettlementPrice : Ask;
+    public decimal? Premium => EntryPrice > 0 ? EntryPrice * Multiplier : null;
     public decimal? EntryCost => Premium + OpenFee;
 }
