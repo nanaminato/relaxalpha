@@ -1,10 +1,11 @@
-import { DatePipe, DecimalPipe, PercentPipe } from '@angular/common';
+import { DatePipe, DecimalPipe, NgTemplateOutlet, PercentPipe } from '@angular/common';
 import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { Batch, DailyStatus, LiveQuoteBatch, MarketApi, MarketUniverse, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
+import { browseList } from './browse-list';
 import { exchangeName, productName } from './product-names';
 
 const tabs = [
@@ -24,7 +25,7 @@ const defaults: Settings = {
 
 @Component({
   selector: 'ra-app',
-  imports: [FormsModule, DatePipe, DecimalPipe, PercentPipe],
+  imports: [FormsModule, DatePipe, DecimalPipe, PercentPipe, NgTemplateOutlet],
   templateUrl: './dashboard.html'
 })
 class Dashboard {
@@ -74,17 +75,9 @@ class Dashboard {
   readonly liveStates = {
     connecting: $localize`连接中`, ready: $localize`已连接`, reconnecting: $localize`重连中`
   };
-  readonly search = signal('');
-  readonly page = signal(0);
-  readonly filtered = computed(() => {
-    const text = this.search().trim().toUpperCase();
-    const quotes = this.quotes();
-    if (!text) return quotes;
-    return quotes.filter(q => [q.symbol, q.underlying, q.exchange, productName(q), exchangeName(q.exchange)]
-      .some(label => label.toUpperCase().includes(text)));
-  });
-  readonly chainPage = computed(() => this.filtered().slice(this.page() * 30, (this.page() + 1) * 30));
-  readonly pageCount = computed(() => Math.max(1, Math.ceil(this.filtered().length / 30)));
+  readonly chain = browseList(this.quotes, quote => quote, 30);
+  readonly ranking = browseList(computed(() => this.scan()?.opportunities ?? []), item => item.quote, 25);
+  readonly simulationOrigin = signal<'chain' | 'ranking' | null>(null);
   readonly quotable = computed(() => this.quotes().filter(q => (q.settlementPrice ?? q.ask ?? 0) > 0 && q.quality !== 'Crossed'));
   readonly underlyings = computed(() => new Set(this.quotes().map(q => q.exchange + '/' + q.underlying)).size);
   readonly twoSided = computed(() => this.quotes().filter(q => q.quality === 'TwoSided').length);
@@ -141,6 +134,9 @@ class Dashboard {
     this.universe.set(universe);
     this.quotes.set([]);
     this.scan.set(null);
+    this.chain.clear();
+    this.ranking.clear();
+    this.simulationOrigin.set(null);
     this.selectQuote(null);
   }
 
@@ -157,17 +153,12 @@ class Dashboard {
       this.batches.set(batches);
       this.scheduled.set(scheduled);
       this.daily.set(daily);
-      this.page.set(Math.min(this.page(), this.pageCount() - 1));
+      this.chain.reconcile();
     } catch (error) {
       if (version === this.refreshVersion) this.marketError.set(this.errorText(error));
     } finally {
       if (version === this.refreshVersion) this.marketLoading.set(false);
     }
-  }
-
-  searchChain(value: string) {
-    this.search.set(value);
-    this.page.set(0);
   }
 
   resetSettings() {
@@ -182,6 +173,7 @@ class Dashboard {
           (typeof value !== 'number' || !Number.isFinite(value))))
         throw new Error($localize`请填写全部数字筛选条件。`);
       this.scan.set(await this.api.scan(this.settings, this.universe()));
+      this.ranking.reconcile(true);
     });
   }
 
@@ -207,6 +199,8 @@ class Dashboard {
   }
 
   openSimulation(quote: Quote) {
+    const origin = this.active();
+    this.simulationOrigin.set(origin === 'chain' || origin === 'ranking' ? origin : null);
     this.selectQuote(quote);
     this.navigate('simulator');
   }
