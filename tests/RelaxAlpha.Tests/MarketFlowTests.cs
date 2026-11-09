@@ -40,7 +40,10 @@ public sealed class MarketFlowTests
 
         var sources = await store.SourcesAsync(default);
         Assert.Equal(3, sources.Count);
-        Assert.Equal(8, sources.Single(b => b.Id == first.Id).Count);
+        var storedBatch = sources.Single(b => b.Id == first.Id);
+        Assert.Equal(8, storedBatch.Count);
+        Assert.Equal(DateTimeKind.Utc, storedBatch.ObservedAtUtc.Kind);
+        Assert.Equal(DateTimeKind.Utc, storedBatch.ImportedAtUtc.Kind);
         var result = await research.ScanAsync(new() { Universe = MarketUniverse.Imported }, default);
         Assert.Equal(9, result.Evaluated);
         Assert.Equal(2, result.Matched);
@@ -54,6 +57,8 @@ public sealed class MarketFlowTests
         Assert.Equal(QuoteQuality.Crossed, latest.Single(q => q.Symbol == "M-C-CROSSED").Quality);
         Assert.Equal(QuoteQuality.Indicative, latest.Single(q => q.Symbol == "M-P-NOBID").Quality);
         var selected = latest.Single(q => q.Symbol == "M-C-3400");
+        Assert.Equal(DateTimeKind.Utc, selected.ExpiryUtc.Kind);
+        Assert.Equal(DateTimeKind.Utc, selected.Batch.ObservedAtUtc.Kind);
         var simulated = await research.SimulateAsync(new(selected.Id, 3600, 0, 0.2, null), default);
         Assert.NotNull(simulated);
         Assert.Equal(3, simulated.Targets.Count);

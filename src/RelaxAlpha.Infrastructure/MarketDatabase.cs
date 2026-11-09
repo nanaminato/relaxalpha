@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using RelaxAlpha.Application;
 using RelaxAlpha.Domain;
 
@@ -10,6 +11,9 @@ public abstract class MarketDatabase(DbContextOptions options) : DbContext(optio
     public DbSet<ImportBatch> Batches => Set<ImportBatch>();
     public DbSet<OptionQuote> Quotes => Set<OptionQuote>();
     public DbSet<OfficialDailyImport> DailyImports => Set<OfficialDailyImport>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) =>
+        configurationBuilder.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -36,6 +40,11 @@ public abstract class MarketDatabase(DbContextOptions options) : DbContext(optio
         });
     }
 }
+
+// SQLite materializes timestamps without a kind. All market timestamps are stored in UTC.
+public sealed class UtcDateTimeConverter() : ValueConverter<DateTime, DateTime>(
+    value => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+    value => DateTime.SpecifyKind(value, DateTimeKind.Utc));
 
 public sealed class SqliteMarketDatabase(DbContextOptions<SqliteMarketDatabase> options) : MarketDatabase(options);
 public sealed class PostgresMarketDatabase(DbContextOptions<PostgresMarketDatabase> options) : MarketDatabase(options);
