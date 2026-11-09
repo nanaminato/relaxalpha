@@ -4,7 +4,7 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
-import { Batch, DailyStatus, MarketApi, MarketUniverse, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
+import { Batch, DailyStatus, LiveQuoteBatch, MarketApi, MarketUniverse, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
 
 const tabs = [
   {id: 'overview', number: '01', name: $localize`市场总览`},
@@ -31,6 +31,7 @@ class Dashboard {
   private readonly hub = new HubConnectionBuilder().withUrl('/hubs/market')
     .withAutomaticReconnect().configureLogging(LogLevel.Warning).build();
   private refreshVersion = 0;
+  private liveVersion = 0;
 
   readonly tabs = tabs;
   readonly active = signal<Tab>('overview');
@@ -64,6 +65,12 @@ class Dashboard {
   readonly scan = signal<Scan | null>(null);
   readonly simulation = signal<Simulation | null>(null);
   readonly selected = signal<Quote | null>(null);
+  readonly live = signal<LiveQuoteBatch | null>(null);
+  readonly liveBusy = signal(false);
+  readonly liveError = signal('');
+  readonly liveStates = {
+    connecting: $localize`连接中`, ready: $localize`已连接`, reconnecting: $localize`重连中`
+  };
   readonly search = signal('');
   readonly page = signal(0);
   readonly filtered = computed(() => {
@@ -128,8 +135,7 @@ class Dashboard {
     this.universe.set(universe);
     this.quotes.set([]);
     this.scan.set(null);
-    this.selected.set(null);
-    this.simulation.set(null);
+    this.selectQuote(null);
   }
 
   async refresh() {
@@ -184,6 +190,10 @@ class Dashboard {
   selectQuote(quote: Quote | null) {
     this.selected.set(quote);
     this.simulation.set(null);
+    ++this.liveVersion;
+    this.live.set(null);
+    this.liveError.set('');
+    this.liveBusy.set(false);
     if (!quote) return;
     this.futuresPrice = quote.futuresPrice;
     this.remainingDays = 0;
@@ -193,6 +203,41 @@ class Dashboard {
   openSimulation(quote: Quote) {
     this.selectQuote(quote);
     this.navigate('simulator');
+  }
+
+  async loadLive() {
+    const quote = this.selected();
+    if (!quote || quote.kind === 'Simulated' || this.liveBusy()) return;
+
+    const version = ++this.liveVersion;
+    this.liveError.set('');
+    this.liveBusy.set(true);
+    try {
+      for (let attempt = 0; attempt < 8; attempt++) {
+        if (version !== this.liveVersion || this.active() !== 'simulator') return;
+        const result = await this.api.live(quote.id);
+        if (version !== this.liveVersion || this.active() !== 'simulator') return;
+        this.live.set(result);
+        if (result.quotes.every(q => q.state !== 'pending')) return;
+        if (attempt < 7) await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    } catch (error) {
+      if (version === this.liveVersion) this.liveError.set(this.errorText(error));
+    } finally {
+      if (version === this.liveVersion) this.liveBusy.set(false);
+    }
+  }
+
+  useLiveUnderlying() {
+    const quote = this.live()?.quotes[1];
+    const age = quote?.quoteTime ? Date.now() - Date.parse(quote.quoteTime) : Infinity;
+    if (this.live()?.state !== 'ready' || !quote?.lastPrice || quote.stale || age > 120_000 || age < -5000) {
+      this.liveError.set($localize`请先刷新并取得有效的标的最新价。`);
+      return;
+    }
+    this.futuresPrice = quote.lastPrice;
+    this.simulation.set(null);
+    this.liveError.set('');
   }
 
   async runSimulation() {

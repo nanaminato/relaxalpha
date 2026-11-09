@@ -96,6 +96,24 @@ export interface Scan {
     reachesTarget: boolean;
   }[];
 }
+export interface LiveQuote {
+  symbol: string;
+  state: 'pending' | 'ready' | 'unavailable';
+  quoteTime?: string;
+  stale?: boolean;
+  lastPrice?: number | null;
+  bid?: number | null;
+  ask?: number | null;
+  volume?: number | null;
+  openInterest?: number | null;
+}
+
+export interface LiveQuoteBatch {
+  source: 'TqSdk';
+  state: 'connecting' | 'ready' | 'reconnecting';
+  quotes: LiveQuote[];
+}
+
 export interface Simulation {
   scenario: Scenario;
   targets: { multiple: number; condition: Target | null }[];
@@ -118,6 +136,9 @@ export class MarketApi {
   }
   scan(settings: Settings, universe: MarketUniverse) {
     return firstValueFrom(this.http.post<Scan>('/api/scans', {...settings, universe}));
+  }
+  live(quoteId: number) {
+    return firstValueFrom(this.http.post<LiveQuoteBatch>(`/api/live/quotes/${quoteId}`, {}));
   }
   simulate(quoteId: number, futuresPrice: number, remainingDays: number, volatility: number, targets: number[]) {
     return firstValueFrom(this.http.post<Simulation>('/api/simulate', {

@@ -3,6 +3,10 @@
 .idea/
 .qa/
 .exchange-cache/
+.secrets/
+.venv/
+__pycache__/
+*.pyc
 .vs/
 .angular/
 node_modules/

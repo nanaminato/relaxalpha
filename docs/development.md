@@ -44,6 +44,23 @@ Compose 默认启用联网采集，直接运行 API 时默认关闭。任务启�
 
 保留数据库卷即可保留原文件及尝试记录；每套独立数据库各有自己的缓存。测试使用代码内样本和假的 HTTP 处理程序。原始官方文件不纳入版本控制。 [上期所日周数据](https://www.shfe.com.cn/reports/tradedata/) · [业务参数汇总](https://www.shfe.com.cn/reports/businessdata/prmsummary/)
 
+## 天勤接入
+
+天勤 SDK 3.10.4 运行在单个 Python 3.13 进程内。进程持有一个 `TqApi` 实例，持续执行 `wait_update`。用户在模拟器查询时，.NET 将选中的期权及标的合约交给该进程订阅。并发和重复查询复用会话、订阅和内存快照。会话异常退出后按 5–120 秒退避重连，并恢复所请求的合约。行情权限由天勤账户决定。 [天勤 SDK 官方文档](https://tqsdk-python.readthedocs.io/en/stable/reference/tqsdk.api.html)
+
+在仓库根目录用 PowerShell 7 初始化本地凭据，再启动可选 Compose 服务。
+
+```powershell
+./scripts/Set-TqSdkCredentials.ps1
+docker compose -f compose.yaml -f compose.tqsdk.yaml up --build -d
+```
+
+脚本掩码读取凭据，保存至 `.secrets/tq_username` 和 `.secrets/tq_password`。该目录从 Git 和 Docker 构建上下文排除，凭据仅通过运行时只读挂载提供给 Python 容器。Linux 用户可限制宿主机目录访问权限（目录 `0700`，两个文件 `0444` 以供容器内非 root 用户读取）。更新凭据后重启 `tq-feed`。使用 PostgreSQL 时可同时叠加 `compose.postgres.yaml`。
+
+打开模拟器，选择真实合约后点击「读取天勤行情」。面板显示天勤原始行情时间、最新价、买一卖一、成交量与持仓量。行情超过两分钟会标记为旧行情；取得有效标的最新价后可手动填入情景。官方日行情仍是默认扫描和权利金估算的来源，天勤服务仅提供盘口快照。
+
+`GET /api/live/status` 可查看会话状态、已请求合约数和会话代数。 `POST /api/live/quotes/{id}` 接受空 JSON 对象并查询本地期权 ID。Python HTTP 端口仅供 Compose 服务网络访问。进程级订阅上限默认 128，使用 `RELAXALPHA_TQ_CAPACITY` 调整（2–512）；达到上限时现有合约仍可查询，新合约返回 429。当前 SDK 订阅随会话保留。离线验证可在 `market-feed` 下运行 `python -m unittest -v`。
+
 ## CSV 数据契约
 
 以 `text/csv` 上传 UTF-8 文件，可含 BOM。每批限制 4 MiB、20,000 行。支持带引号的 CSV 字段。字段名不区分大小写，可调整列顺序。同一批次的交易所与合约组合必须唯一。格式错误时拒绝整个批次并返回错误位置。

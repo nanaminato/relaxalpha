@@ -33,6 +33,10 @@ docker compose up --build -d
 docker compose -f compose.yaml -f compose.postgres.yaml up --build -d
 ```
 
+## 可选天勤盘口
+
+天勤由一个独立 Python 进程维持连接。启用后，在「情景模拟器」选择合约并点击「读取天勤行情」。账号和密码通过本地 Docker secrets 挂载。启动、轮换和诊断步骤见 [天勤接入](docs/development.md#天勤接入)。
+
 ## 构建与测试
 
 ```powershell

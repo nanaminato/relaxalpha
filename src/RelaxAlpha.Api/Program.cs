@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Net.Http.Headers;
 using Quartz;
+using RelaxAlpha.Api;
 using RelaxAlpha.Application;
 using RelaxAlpha.Domain;
 using RelaxAlpha.Infrastructure;
@@ -48,6 +49,12 @@ builder.Services.AddHttpClient<ShfeDailyReports>(http =>
     http.DefaultRequestHeaders.UserAgent.ParseAdd("RelaxAlpha/0.1");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddScoped<IExchangeDailyIngestion, ShfeDailyIngestion>();
+var liveUrl = builder.Configuration["LiveQuotes:Url"];
+builder.Services.AddHttpClient<TqQuoteFeed>(http =>
+{
+    http.Timeout = TimeSpan.FromSeconds(3);
+    if (!string.IsNullOrWhiteSpace(liveUrl)) http.BaseAddress = new Uri(liveUrl.TrimEnd('/') + "/");
+});
 builder.Services.AddSingleton<IMarketUpdates, SignalRMarketUpdates>();
 builder.Services.AddSingleton<ScheduledScan>();
 builder.Services.AddQuartz(q =>
@@ -78,6 +85,7 @@ await using (var scope = app.Services.CreateAsyncScope())
 }
 
 var api = app.MapGroup("/api");
+api.MapLiveQuotes();
 api.MapGet("/health", () => TypedResults.Ok(new { status = "ok" }));
 api.MapGet("/market", async (MarketUniverse? universe, bool? simulated, MarketResearch research, CancellationToken ct) =>
 {

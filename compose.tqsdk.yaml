@@ -1,0 +1,24 @@
+services:
+  relaxalpha:
+    environment:
+      LiveQuotes__Url: http://tq-feed:8765
+    depends_on:
+      - tq-feed
+
+  tq-feed:
+    build: ./market-feed
+    restart: unless-stopped
+    stop_grace_period: 35s
+    environment:
+      TQ_USERNAME_FILE: /run/secrets/tq_username
+      TQ_PASSWORD_FILE: /run/secrets/tq_password
+      TQ_FEED_CAPACITY: "${RELAXALPHA_TQ_CAPACITY:-128}"
+    secrets:
+      - tq_username
+      - tq_password
+
+secrets:
+  tq_username:
+    file: ./.secrets/tq_username
+  tq_password:
+    file: ./.secrets/tq_password

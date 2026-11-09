@@ -2,6 +2,9 @@
 .idea
 .qa
 .exchange-cache
+.secrets
+**/__pycache__
+**/.venv
 **/bin
 **/obj
 **/node_modules

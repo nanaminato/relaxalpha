@@ -179,6 +179,50 @@
             }
             <button class="primary" type="button" [disabled]="!selected() || busy()" (click)="runSimulation()" i18n>计算情景</button>
           </section>
+          @if (selected(); as q) {
+            @if (q.kind !== 'Simulated') {
+              <section class="card">
+                <div class="section-bar">
+                  <div>
+                    <h2 i18n>天勤盘口</h2>
+                    <span class="muted" i18n>按需查询所选期权和标的。行情时间以供应商返回为准。</span>
+                  </div>
+                  <button class="secondary" type="button" [disabled]="liveBusy()" (click)="loadLive()" i18n>读取天勤行情</button>
+                </div>
+                @if (liveError()) { <p class="banner error" role="alert">{{ liveError() }}</p> }
+                @if (liveBusy()) { <p class="muted" role="status" i18n>等待天勤行情…</p> }
+                @if (live(); as feed) {
+                  <p class="muted" i18n>天勤连接 · {{ liveStates[feed.state] }}</p>
+                  <div class="table-wrap">
+                    <table>
+                      <thead><tr><th i18n>合约</th><th i18n>行情时间 · 北京时间</th><th i18n>最新价</th><th i18n>买一 / 卖一</th><th i18n>成交 / 持仓</th></tr></thead>
+                      <tbody>
+                        @for (tick of feed.quotes; track tick.symbol) {
+                          <tr><td><b>{{ tick.symbol }}</b></td>
+                            @if (tick.state === 'ready') {
+                              <td>{{ tick.quoteTime | date:'MM-dd HH:mm:ss':'+0800' }}
+                                @if (tick.stale) { <small i18n>旧行情</small> }
+                              </td>
+                              <td>{{ (tick.lastPrice | number) ?? '—' }}</td>
+                              <td>{{ (tick.bid | number) ?? '—' }} / {{ (tick.ask | number) ?? '—' }}</td>
+                              <td>{{ (tick.volume | number) ?? '—' }} / {{ (tick.openInterest | number) ?? '—' }}</td>
+                            } @else if (tick.state === 'pending') {
+                              <td colspan="4" i18n>等待该合约首笔行情</td>
+                            } @else {
+                              <td colspan="4" i18n>该合约行情暂不可用</td>
+                            }
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                  @if (feed.state === 'ready' && feed.quotes[1]?.lastPrice && !feed.quotes[1]?.stale) {
+                    <button class="secondary" type="button" (click)="useLiveUnderlying()" i18n>用标的最新价填入情景</button>
+                  }
+                }
+              </section>
+            }
+          }
           @if (simulation(); as result) {
             <div class="metrics result">
               <article><span i18n>理论价格 / 报价单位</span><strong>{{ result.scenario.valuation.price | number:'1.2-4' }}</strong></article>
