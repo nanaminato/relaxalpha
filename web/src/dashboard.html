@@ -117,7 +117,7 @@
           </section>
         }
         @case ('ranking') {
-          <p class="subtitle" i18n>按达到目标所需的有利变动幅度排序。净回收倍数 = 扣除退出费用后的理论价值 ÷ 开仓资金。</p>
+          <p class="subtitle" i18n>默认按达到目标所需的有利变动幅度排序。点击表头可切换排序，目标涨跌幅按带正负号的百分比比较。净回收倍数 = 扣除退出费用后的理论价值 ÷ 开仓资金。</p>
           <section class="card">
             <div class="section-bar">
               @if (scan(); as result) {
@@ -132,29 +132,67 @@
               @if (result.matched > result.opportunities.length) {
                 <p class="muted" i18n>浏览筛选仅作用于已载入的前 {{ result.opportunities.length }} 条结果。</p>
               }
-              <ng-container *ngTemplateOutlet="browseControls; context: { $implicit: ranking }"></ng-container>
+              <div class="actions ranking-view">
+                <button type="button" class="secondary" [attr.aria-pressed]="rankingGrouped()"
+                        (click)="rankingGrouped.set(!rankingGrouped())" i18n>按品种分组</button>
+                @if (rankingGrouped()) {
+                  <button type="button" class="secondary" [disabled]="!rankingGroups().length"
+                          (click)="setAllProductsExpanded(true)" i18n>展开全部</button>
+                  <button type="button" class="secondary" [disabled]="!rankingGroups().length"
+                          (click)="setAllProductsExpanded(false)" i18n>折叠全部</button>
+                }
+              </div>
+              <ng-container *ngTemplateOutlet="browseControls; context: {
+                $implicit: ranking, groupCount: rankingGrouped() ? rankingGroups().length : null
+              }"></ng-container>
+              @if (rankingGrouped()) {
+                <p class="muted" i18n>组内按当前顺序排列，各组按第一条合约的位置排列。</p>
+              }
               <div class="table-wrap browse-table" role="region" aria-label="机会排行榜数据表" i18n-aria-label tabindex="0">
                 <table>
-                  <thead><tr><th i18n>品种 / 合约</th><th i18n>单手资金 / 本金风险</th><th i18n>目标到期价 / 变动</th><th i18n>冲击情景净回收 / 盈亏</th><th i18n>筛选依据与质量</th><th i18n>操作</th></tr></thead>
+                  <thead><tr>
+                    <th scope="col" i18n>品种 / 合约</th>
+                    @for (header of rankingHeaders; track header.column) {
+                      @let direction = rankingDirection(header.column);
+                      <th scope="col" class="sort-header" [attr.aria-sort]="direction">
+                        <button class="sort-button" type="button" (click)="sortRanking(header.column)" [attr.aria-label]="header.title">
+                          <span>{{ header.title }}<small>{{ header.detail }}</small></span>
+                          <span aria-hidden="true">{{ direction === 'ascending' ? '↑' : direction === 'descending' ? '↓' : '↕' }}</span>
+                        </button>
+                      </th>
+                    }
+                    <th scope="col" i18n>筛选依据与质量</th><th scope="col" i18n>操作</th>
+                  </tr></thead>
                   <tbody>
-                    @for (item of ranking.rows(); track item.quote.id) {
-                      <tr>
-                        <td class="contract-cell">
-                          <div class="contract-title"><strong>{{ productName(item.quote) }}</strong><span>{{ sides[item.quote.side] }}</span></div>
-                          <small class="contract-code">{{ item.quote.symbol }}</small>
-                          <small>{{ exchangeName(item.quote.exchange) }} · {{ item.quote.expiryUtc | date:'MM-dd':'+0800' }}</small>
-                        </td>
-                        <td>¥{{ item.quote.entryCost | number:'1.2-2' }}<small i18n>期权腿最多损失全部开仓成本</small></td>
-                        <td><b>{{ item.target.futuresPrice | number:'1.2-2' }}</b><small>{{ item.target.change | percent:'1.2-2' }}</small></td>
-                        <td><b>{{ item.shockScenario.multiple | number:'1.2-2' }}×</b> / ¥{{ item.shockScenario.profit | number:'1.2-2' }}
-                          <small>
-                            @if (item.reachesTarget) { <ng-container i18n>冲击情景达到目标</ng-container> }
-                            @else { <ng-container i18n>冲击情景未达到目标</ng-container> }
-                          </small>
-                        </td>
-                        <td><span class="tag" i18n>通过预算与流动性门槛</span><small i18n>IV {{ item.quote.iv | percent:'1.1-2' }} · 价差 {{ (item.spreadRatio | percent:'1.1-2') ?? '—' }} · 量 {{ item.quote.volume }} / 仓 {{ item.quote.openInterest }}</small><small>{{ qualities[item.quote.quality] }} · {{ item.quote.source }} · {{ sourceLabel(item.quote.kind, item.quote.tradingDate) }}</small></td>
-                        <td><button class="link-button" type="button" [disabled]="busy()" (click)="openSimulation(item.quote)" i18n>模拟</button></td>
-                      </tr>
+                    @for (row of rankingDisplayRows(); track row.key) {
+                      @if (row.kind === 'group') {
+                        <tr class="product-group"><td colspan="6">
+                          <button type="button" class="secondary" [attr.aria-expanded]="row.expanded" (click)="toggleProduct(row.group.key)">
+                            <span aria-hidden="true">{{ row.expanded ? '▾' : '▸' }}</span>
+                            <strong>{{ productName(row.group.quote) }}</strong>
+                            <span class="muted" i18n>{{ row.group.items.length }} 条 · {{ exchangeName(row.group.quote.exchange) }}</span>
+                          </button>
+                        </td></tr>
+                      } @else {
+                        @let item = row.item;
+                        <tr>
+                          <td class="contract-cell">
+                            <div class="contract-title"><strong>{{ productName(item.quote) }}</strong><span>{{ sides[item.quote.side] }}</span></div>
+                            <small class="contract-code">{{ item.quote.symbol }}</small>
+                            <small>{{ exchangeName(item.quote.exchange) }} · {{ item.quote.expiryUtc | date:'MM-dd':'+0800' }}</small>
+                          </td>
+                          <td>¥{{ item.quote.entryCost | number:'1.2-2' }}<small i18n>期权腿最多损失全部开仓成本</small></td>
+                          <td><b>{{ item.target.futuresPrice | number:'1.2-2' }}</b><small>{{ item.target.change | percent:'1.2-2' }}</small></td>
+                          <td><b>{{ item.shockScenario.multiple | number:'1.2-2' }}×</b> / ¥{{ item.shockScenario.profit | number:'1.2-2' }}
+                            <small>
+                              @if (item.reachesTarget) { <ng-container i18n>冲击情景达到目标</ng-container> }
+                              @else { <ng-container i18n>冲击情景未达到目标</ng-container> }
+                            </small>
+                          </td>
+                          <td><span class="tag" i18n>通过预算与流动性门槛</span><small i18n>IV {{ item.quote.iv | percent:'1.1-2' }} · 价差 {{ (item.spreadRatio | percent:'1.1-2') ?? '—' }} · 量 {{ item.quote.volume }} / 仓 {{ item.quote.openInterest }}</small><small>{{ qualities[item.quote.quality] }} · {{ item.quote.source }} · {{ sourceLabel(item.quote.kind, item.quote.tradingDate) }}</small></td>
+                          <td><button class="link-button" type="button" [disabled]="busy()" (click)="openSimulation(item.quote)" i18n>模拟</button></td>
+                        </tr>
+                      }
                     } @empty {
                       <tr><td class="empty" colspan="6">
                         @if (result.opportunities.length) { <span i18n>没有符合浏览筛选的合约，可清除筛选后重试。</span> }
@@ -346,7 +384,7 @@
   </main>
 </div>
 
-<ng-template #browseControls let-list>
+<ng-template #browseControls let-list let-groupCount="groupCount">
   <div class="browse-filters">
     <label i18n>搜索
       <input type="search" placeholder="品种、合约或交易所" i18n-placeholder [ngModel]="list.filters().search" (ngModelChange)="list.set('search', $event)">
@@ -369,10 +407,13 @@
     <button class="secondary" type="button" [disabled]="!list.active()" (click)="list.clear()" i18n>清除浏览筛选</button>
   </div>
   <div class="browse-summary">
-    @if (list.range(); as range) {
+    @if (groupCount != null) {
+      <span class="muted" aria-live="polite" i18n>共 {{ groupCount | number }} 个品种，{{ list.filtered().length | number }} 条合约</span>
+    } @else {
+      @let range = list.range();
       <span class="muted" aria-live="polite" i18n>显示 {{ range.first | number }}–{{ range.last | number }}，共 {{ range.total | number }} 条</span>
     }
-    @if (list.pages().length > 1) {
+    @if (groupCount == null && list.pages().length > 1) {
       <nav class="pager" aria-label="结果分页" i18n-aria-label>
         <button class="secondary" type="button" [disabled]="list.page() === 0" (click)="list.goTo(list.page() - 1)" i18n>上一页</button>
         <select aria-label="跳转页码" i18n-aria-label [ngModel]="list.page()" (ngModelChange)="list.goTo($event)">

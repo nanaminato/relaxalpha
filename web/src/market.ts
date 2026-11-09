@@ -83,18 +83,19 @@ export interface Scenario {
   profit: number;
   multiple: number;
 }
+export interface Opportunity {
+  quote: Quote;
+  spreadRatio: number | null;
+  target: Target;
+  shockScenario: Scenario;
+  reachesTarget: boolean;
+}
 export interface Scan {
   asOfUtc: string;
   settings: Settings;
   evaluated: number;
   matched: number;
-  opportunities: {
-    quote: Quote;
-    spreadRatio: number | null;
-    target: Target;
-    shockScenario: Scenario;
-    reachesTarget: boolean;
-  }[];
+  opportunities: Opportunity[];
 }
 export interface LiveQuote {
   symbol: string;

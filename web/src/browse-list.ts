@@ -10,7 +10,7 @@ interface BrowseFilters {
 
 const defaults: BrowseFilters = {search: '', product: '', side: ''};
 const collator = new Intl.Collator('zh-CN', {numeric: true});
-const productKey = (quote: Quote) => quote.exchange + ':' + productName(quote);
+export const productKey = (quote: Quote) => quote.exchange + ':' + productName(quote);
 
 export function browseList<T>(items: Signal<readonly T[]>, quoteOf: (item: T) => Quote, pageSize: number) {
   const filters = signal(defaults);

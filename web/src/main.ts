@@ -4,8 +4,8 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
-import { Batch, DailyStatus, LiveQuoteBatch, MarketApi, MarketUniverse, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
-import { browseList } from './browse-list';
+import { Batch, DailyStatus, LiveQuoteBatch, MarketApi, MarketUniverse, Opportunity, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
+import { browseList, productKey } from './browse-list';
 import { exchangeName, productName } from './product-names';
 
 const tabs = [
@@ -17,6 +17,23 @@ const tabs = [
   {id: 'sources', number: '06', name: $localize`数据源管理`},
 ] as const;
 type Tab = typeof tabs[number]['id'];
+type RankingColumn = 'cost' | 'change' | 'multiple';
+type SortDirection = 'ascending' | 'descending';
+
+interface RankingGroup {
+  key: string;
+  quote: Quote;
+  items: Opportunity[];
+}
+
+type RankingRow = {key: string; kind: 'group'; group: RankingGroup; expanded: boolean}
+  | {key: number; kind: 'contract'; item: Opportunity};
+
+const rankingValue: Record<RankingColumn, (item: Opportunity) => number | null> = {
+  cost: item => item.quote.entryCost,
+  change: item => item.target.change,
+  multiple: item => item.shockScenario.multiple
+};
 
 const defaults: Settings = {
   budget: 1000, targetMultiple: 5, minDays: 30, maxDays: 90, side: null, minIv: 0, maxIv: 5,
@@ -76,7 +93,50 @@ class Dashboard {
     connecting: $localize`连接中`, ready: $localize`已连接`, reconnecting: $localize`重连中`
   };
   readonly chain = browseList(this.quotes, quote => quote, 30);
-  readonly ranking = browseList(computed(() => this.scan()?.opportunities ?? []), item => item.quote, 25);
+  readonly rankingSort = signal<{column: RankingColumn; direction: SortDirection} | null>(null);
+  readonly rankingGrouped = signal(false);
+  readonly expandedProducts = signal<ReadonlySet<string>>(new Set());
+  readonly rankingHeaders = [
+    {column: 'cost', title: $localize`单手资金`, detail: $localize`本金风险`},
+    {column: 'change', title: $localize`目标涨跌幅`, detail: $localize`目标到期价`},
+    {column: 'multiple', title: $localize`情景净回收倍数`, detail: $localize`情景盈亏`}
+  ] as const;
+  readonly ranking = browseList(computed(() => {
+    const items = this.scan()?.opportunities ?? [];
+    const sort = this.rankingSort();
+    if (!sort) return items;
+    const value = rankingValue[sort.column];
+    const sign = sort.direction === 'ascending' ? 1 : -1;
+    return [...items].sort((left, right) => {
+      const a = value(left);
+      const b = value(right);
+      if (a === b) return 0;
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return (a - b) * sign;
+    });
+  }), item => item.quote, 25);
+  readonly rankingGroups = computed(() => {
+    const groups = new Map<string, RankingGroup>();
+    for (const item of this.ranking.filtered()) {
+      const key = productKey(item.quote);
+      const existing = groups.get(key);
+      if (existing) existing.items.push(item);
+      else groups.set(key, {key, quote: item.quote, items: [item]});
+    }
+    return [...groups.values()];
+  });
+  readonly rankingDisplayRows = computed<RankingRow[]>(() => {
+    const contractRow = (item: Opportunity): RankingRow => ({key: item.quote.id, kind: 'contract', item});
+    if (!this.rankingGrouped()) return this.ranking.rows().map(contractRow);
+
+    const expandedProducts = this.expandedProducts();
+    return this.rankingGroups().flatMap(group => {
+      const expanded = expandedProducts.has(group.key);
+      const header: RankingRow = {key: group.key, kind: 'group', group, expanded};
+      return expanded ? [header, ...group.items.map(contractRow)] : [header];
+    });
+  });
   readonly simulationOrigin = signal<'chain' | 'ranking' | null>(null);
   readonly quotable = computed(() => this.quotes().filter(q => (q.settlementPrice ?? q.ask ?? 0) > 0 && q.quality !== 'Crossed'));
   readonly underlyings = computed(() => new Set(this.quotes().map(q => q.exchange + '/' + q.underlying)).size);
@@ -136,6 +196,7 @@ class Dashboard {
     this.scan.set(null);
     this.chain.clear();
     this.ranking.clear();
+    this.expandedProducts.set(new Set());
     this.simulationOrigin.set(null);
     this.selectQuote(null);
   }
@@ -159,6 +220,31 @@ class Dashboard {
     } finally {
       if (version === this.refreshVersion) this.marketLoading.set(false);
     }
+  }
+
+  sortRanking(column: RankingColumn) {
+    const current = this.rankingSort();
+    const direction = current?.column === column && current.direction === 'ascending' ? 'descending' : 'ascending';
+    this.rankingSort.set({column, direction});
+    this.ranking.goTo(0);
+  }
+
+  rankingDirection(column: RankingColumn) {
+    const sort = this.rankingSort();
+    return sort?.column === column ? sort.direction : null;
+  }
+
+  toggleProduct(key: string) {
+    this.expandedProducts.update(previous => {
+      const expanded = new Set(previous);
+      if (expanded.has(key)) expanded.delete(key);
+      else expanded.add(key);
+      return expanded;
+    });
+  }
+
+  setAllProductsExpanded(expanded: boolean) {
+    this.expandedProducts.set(new Set(expanded ? this.rankingGroups().map(group => group.key) : []));
   }
 
   resetSettings() {
