@@ -4,7 +4,7 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
-import { Batch, MarketApi, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
+import { Batch, DailyStatus, MarketApi, MarketUniverse, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
 
 const tabs = [
   {id: 'overview', number: '01', name: $localize`市场总览`},
@@ -35,7 +35,13 @@ class Dashboard {
   readonly tabs = tabs;
   readonly active = signal<Tab>('overview');
   readonly title = computed(() => tabs.find(tab => tab.id === this.active())!.name);
-  readonly simulated = signal(false);
+  readonly universe = signal<MarketUniverse>('OfficialDaily');
+  readonly official = computed(() => this.universe() === 'OfficialDaily');
+  readonly universes: {id: MarketUniverse; label: string}[] = [
+    {id: 'OfficialDaily', label: $localize`官方日行情`},
+    {id: 'Imported', label: $localize`导入行情`},
+    {id: 'Simulated', label: $localize`模拟数据`}
+  ];
   readonly connected = signal(false);
   readonly busy = signal(false);
   readonly marketLoading = signal(true);
@@ -45,6 +51,16 @@ class Dashboard {
   readonly quotes = signal<Quote[]>([]);
   readonly batches = signal<Batch[]>([]);
   readonly scheduled = signal<Scan | null>(null);
+  readonly daily = signal<DailyStatus | null>(null);
+  readonly dailyMessage = computed(() => {
+    const daily = this.daily();
+    if (!daily) return $localize`正在读取日行情状态…`;
+    if (!daily.tradingDate) return $localize`当前日期超出已配置的交易日历。`;
+    if (daily.batchId) return $localize`已入库 · ${daily.tradingDate}:date:`;
+    if (!daily.enabled) return $localize`采集已关闭 · 目标交易日 ${daily.tradingDate}:date:`;
+    if (daily.failure) return $localize`采集失败，等待下次重试 · ${daily.tradingDate}:date:`;
+    return $localize`等待入库 · ${daily.tradingDate}:date:`;
+  });
   readonly scan = signal<Scan | null>(null);
   readonly simulation = signal<Simulation | null>(null);
   readonly selected = signal<Quote | null>(null);
@@ -56,7 +72,7 @@ class Dashboard {
   });
   readonly chainPage = computed(() => this.filtered().slice(this.page() * 30, (this.page() + 1) * 30));
   readonly pageCount = computed(() => Math.max(1, Math.ceil(this.filtered().length / 30)));
-  readonly quotable = computed(() => this.quotes().filter(q => (q.ask ?? 0) > 0 && q.quality !== 'Crossed'));
+  readonly quotable = computed(() => this.quotes().filter(q => (q.settlementPrice ?? q.ask ?? 0) > 0 && q.quality !== 'Crossed'));
   readonly underlyings = computed(() => new Set(this.quotes().map(q => q.exchange + '/' + q.underlying)).size);
   readonly twoSided = computed(() => this.quotes().filter(q => q.quality === 'TwoSided').length);
   readonly latestQuote = computed(() => this.quotes().reduce((latest, q) =>
@@ -67,7 +83,8 @@ class Dashboard {
     Licensed: $localize`已授权（申报）`, Simulated: $localize`模拟数据`
   };
   readonly qualities: Record<Quality, string> = {
-    TwoSided: $localize`双边报价`, Indicative: $localize`参考报价`, Crossed: $localize`盘口倒挂`
+    TwoSided: $localize`双边报价`, Indicative: $localize`参考报价`, Crossed: $localize`盘口倒挂`,
+    DailySettlement: $localize`日结算参考`
   };
   readonly sides = {Call: $localize`看涨`, Put: $localize`看跌`};
   settings = {...defaults};
@@ -100,14 +117,19 @@ class Dashboard {
     this.notice.set('');
   }
 
-  changeUniverse(simulated: boolean) {
-    if (simulated === this.simulated()) return;
-    this.simulated.set(simulated);
+  changeUniverse(universe: MarketUniverse) {
+    if (universe === this.universe()) return;
+    this.selectUniverse(universe);
+    void this.refresh();
+  }
+
+  private selectUniverse(universe: MarketUniverse) {
+    if (universe === this.universe()) return;
+    this.universe.set(universe);
     this.quotes.set([]);
     this.scan.set(null);
     this.selected.set(null);
     this.simulation.set(null);
-    void this.refresh();
   }
 
   async refresh() {
@@ -115,13 +137,14 @@ class Dashboard {
     this.marketLoading.set(true);
     this.marketError.set('');
     try {
-      const [quotes, batches, scheduled] = await Promise.all([
-        this.api.market(this.simulated()), this.api.sources(), this.api.scheduled()
+      const [quotes, batches, scheduled, daily] = await Promise.all([
+        this.api.market(this.universe()), this.api.sources(), this.api.scheduled(), this.api.daily()
       ]);
       if (version !== this.refreshVersion) return;
       this.quotes.set(quotes);
       this.batches.set(batches);
       this.scheduled.set(scheduled);
+      this.daily.set(daily);
       this.page.set(Math.min(this.page(), this.pageCount() - 1));
     } catch (error) {
       if (version === this.refreshVersion) this.marketError.set(this.errorText(error));
@@ -146,8 +169,12 @@ class Dashboard {
       if (Object.entries(this.settings).some(([key, value]) => key !== 'side' &&
           (typeof value !== 'number' || !Number.isFinite(value))))
         throw new Error($localize`请填写全部数字筛选条件。`);
-      this.scan.set(await this.api.scan(this.settings, this.simulated()));
+      this.scan.set(await this.api.scan(this.settings, this.universe()));
     });
+  }
+
+  sourceLabel(kind: SourceKind, tradingDate: string | null) {
+    return tradingDate ? $localize`官方日行情` : this.kinds[kind];
   }
 
   selectById(id: number | null) {
@@ -190,7 +217,7 @@ class Dashboard {
     await this.perform(async () => {
       if (!this.observedAt || !this.source.trim()) throw new Error($localize`请填写数据来源及观测时间。`);
       const batch = await this.api.import(file, this.source.trim(), this.kind, new Date(this.observedAt).toISOString());
-      this.changeUniverse(batch.kind === 'Simulated');
+      this.selectUniverse(batch.kind === 'Simulated' ? 'Simulated' : 'Imported');
       this.notice.set($localize`导入批次包含 ${batch.count}:count: 条行情。`);
       await this.refresh();
     });
@@ -199,7 +226,7 @@ class Dashboard {
   async loadDemo() {
     await this.perform(async () => {
       await this.api.demo();
-      this.changeUniverse(true);
+      this.selectUniverse('Simulated');
       this.navigate('chain');
       this.notice.set($localize`已加载模拟期权链。演示合约仅用于验证研究流程。`);
       await this.refresh();

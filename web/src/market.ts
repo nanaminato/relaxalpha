@@ -4,7 +4,8 @@ import { firstValueFrom } from 'rxjs';
 
 export type Side = 'Call' | 'Put';
 export type SourceKind = 'UserProvided' | 'ExchangePublic' | 'Licensed' | 'Simulated';
-export type Quality = 'TwoSided' | 'Indicative' | 'Crossed';
+export type Quality = 'TwoSided' | 'Indicative' | 'Crossed' | 'DailySettlement';
+export type MarketUniverse = 'OfficialDaily' | 'Imported' | 'Simulated';
 
 export interface Quote {
   id: number;
@@ -30,6 +31,8 @@ export interface Quote {
   kind: SourceKind;
   observedAtUtc: string;
   iv: number | null;
+  settlementPrice: number | null;
+  tradingDate: string | null;
 }
 export interface Batch {
   id: string;
@@ -38,6 +41,16 @@ export interface Batch {
   observedAtUtc: string;
   importedAtUtc: string;
   count: number;
+  tradingDate: string | null;
+}
+export interface DailyStatus {
+  enabled: boolean;
+  offline: boolean;
+  tradingDate: string | null;
+  batchId: string | null;
+  lastAttemptUtc: string | null;
+  retryAfterUtc: string | null;
+  failure: string | null;
 }
 export interface Settings {
   budget: number;
@@ -77,7 +90,7 @@ export interface Scan {
   matched: number;
   opportunities: {
     quote: Quote;
-    spreadRatio: number;
+    spreadRatio: number | null;
     target: Target;
     shockScenario: Scenario;
     reachesTarget: boolean;
@@ -91,17 +104,20 @@ export interface Simulation {
 @Injectable({ providedIn: 'root' })
 export class MarketApi {
   private readonly http = inject(HttpClient);
-  market(simulated: boolean) {
-    return firstValueFrom(this.http.get<Quote[]>('/api/market', {params: {simulated}}));
+  market(universe: MarketUniverse) {
+    return firstValueFrom(this.http.get<Quote[]>('/api/market', {params: {universe}}));
   }
   sources() {
     return firstValueFrom(this.http.get<Batch[]>('/api/sources'));
   }
+  daily() {
+    return firstValueFrom(this.http.get<DailyStatus>('/api/sources/daily'));
+  }
   scheduled() {
     return firstValueFrom(this.http.get<Scan | null>('/api/scans/scheduled'));
   }
-  scan(settings: Settings, simulated: boolean) {
-    return firstValueFrom(this.http.post<Scan>('/api/scans', {...settings, simulated}));
+  scan(settings: Settings, universe: MarketUniverse) {
+    return firstValueFrom(this.http.post<Scan>('/api/scans', {...settings, universe}));
   }
   simulate(quoteId: number, futuresPrice: number, remainingDays: number, volatility: number, targets: number[]) {
     return firstValueFrom(this.http.post<Simulation>('/api/simulate', {

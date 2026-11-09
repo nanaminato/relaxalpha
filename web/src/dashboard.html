@@ -21,15 +21,20 @@
       <span class="eyebrow" i18n>中国商品期权 / 研究终端</span>
       <div class="toolbar">
         <div class="switch" aria-label="数据范围" i18n-aria-label>
-          <button type="button" [class.on]="!simulated()" [attr.aria-pressed]="!simulated()" [disabled]="busy()" (click)="changeUniverse(false)" i18n>导入行情</button>
-          <button type="button" [class.on]="simulated()" [attr.aria-pressed]="simulated()" [disabled]="busy()" (click)="changeUniverse(true)" i18n>模拟数据</button>
+          @for (item of universes; track item.id) {
+            <button type="button" [class.on]="universe() === item.id" [attr.aria-pressed]="universe() === item.id"
+                    [disabled]="busy()" (click)="changeUniverse(item.id)">{{ item.label }}</button>
+          }
         </div>
         <button class="secondary" type="button" [disabled]="marketLoading()" (click)="refresh()" i18n>刷新</button>
       </div>
     </header>
     <div class="content">
       <h1>{{ title() }}</h1>
-      @if (simulated()) { <p class="banner demo" i18n>模拟数据视图。演示价格、合约与筛选结果均为虚构。</p> }
+      @if (official()) {
+        <p class="banner"><strong>{{ dailyMessage() }}</strong> · <ng-container i18n>上期所官网日文件，含能源中心品种。结算价只用于研究估算，日文件不提供买卖盘口。</ng-container></p>
+      }
+      @if (universe() === 'Simulated') { <p class="banner demo" i18n>模拟数据视图。演示价格、合约与筛选结果均为虚构。</p> }
       @if (marketError()) { <p class="banner error" role="alert">{{ marketError() }}</p> }
       @if (error()) { <p class="banner error" role="alert">{{ error() }}</p> }
       @if (notice()) { <p class="banner" role="status">{{ notice() }}</p> }
@@ -40,14 +45,20 @@
           <div class="metrics">
             <article><span i18n>未到期期权</span><strong>{{ quotes().length | number }}</strong><small i18n>当前视图 · 最新快照</small></article>
             <article><span i18n>标的期货</span><strong>{{ underlyings() | number }}</strong><small i18n>按交易所和标的去重</small></article>
-            <article><span i18n>双边报价</span><strong>{{ twoSided() | number }}</strong><small i18n>有效买卖价且未倒挂</small></article>
+            <article>
+              @if (official()) {
+                <span i18n>行情口径</span><strong i18n>日结算</strong><small i18n>上一个交易日</small>
+              } @else {
+                <span i18n>双边报价</span><strong>{{ twoSided() | number }}</strong><small i18n>有效买卖价且未倒挂</small>
+              }
+            </article>
             <article><span i18n>研究预算</span><strong>¥{{ settings.budget | number }}</strong><small i18n>单手权利金 + 开仓费</small></article>
           </div>
           <section class="card overview">
             <div>
               <span class="eyebrow" i18n>研究流程</span>
-              <h2 i18n>从一份行情快照开始</h2>
-              <p i18n>导入有使用权限的期权链，或加载独立演示数据。先检查盘口，再运行预算筛选和情景模拟。</p>
+              <h2 i18n>从上一交易日开始</h2>
+              <p i18n>用上期所和能源中心的上一交易日日结算数据运行预算扫描。你也可以导入自己的盘口快照，或加载独立演示数据。</p>
               <div class="actions">
                 <button class="primary" type="button" (click)="navigate('sources')" i18n>导入 CSV</button>
                 <button class="secondary" type="button" [disabled]="busy()" (click)="loadDemo()" i18n>加载模拟数据</button>
@@ -57,7 +68,7 @@
             <div class="overview-aside">
               <span i18n>最近行情（北京时间）</span>
               <strong>{{ (latestQuote() | date:'MM-dd HH:mm':'+0800') || '—' }}</strong>
-              <span i18n>默认策略定时扫描（非模拟）</span>
+              <span i18n>官方日行情定时扫描</span>
               @if (scheduled(); as result) {
                 <strong>{{ result.asOfUtc | date:'MM-dd HH:mm':'+0800' }} · {{ result.matched }} <ng-container i18n>条命中</ng-container></strong>
               } @else { <strong i18n>等待首轮扫描</strong> }
@@ -72,24 +83,29 @@
             </div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th i18n>期权合约</th><th i18n>到期 · 北京时间</th><th i18n>标的 / 行权价</th><th i18n>买价 / 卖价</th><th i18n>单手资金</th><th i18n>中间价 IV</th><th i18n>成交 / 持仓</th><th i18n>质量与来源</th><th i18n>操作</th></tr></thead>
+                <thead><tr><th i18n>期权合约</th><th i18n>到期 · 北京时间</th><th i18n>标的 / 行权价</th>@if (official()) { <th i18n>期权结算价</th> } @else { <th i18n>买价 / 卖价</th> }<th i18n>单手资金</th><th i18n>参考 IV</th><th i18n>成交 / 持仓</th><th i18n>质量与来源</th><th i18n>操作</th></tr></thead>
                 <tbody>
                   @for (q of chainPage(); track q.id) {
                     <tr>
                       <td><b>{{ q.symbol }}</b><small>{{ q.exchange }} · {{ q.underlying }} · {{ sides[q.side] }}</small></td>
                       <td>{{ q.expiryUtc | date:'yyyy-MM-dd HH:mm':'+0800' }}</td>
                       <td>{{ q.futuresPrice | number }} / {{ q.strike | number }}</td>
-                      <td>{{ (q.bid | number) ?? '—' }} / {{ (q.ask | number) ?? '—' }}</td>
+                      @if (official()) {
+                        <td>{{ (q.settlementPrice | number) ?? '—' }}</td>
+                      } @else {
+                        <td>{{ (q.bid | number) ?? '—' }} / {{ (q.ask | number) ?? '—' }}</td>
+                      }
                       <td>{{ (q.entryCost | number:'1.2-2') ?? '—' }}
                         @if (q.premium !== null) { <small i18n>权利金 {{ q.premium | number }} + 开仓费 {{ q.openFee | number }}</small> }</td>
                       <td>{{ (q.iv | percent:'1.1-2') ?? '—' }}</td>
                       <td>{{ q.volume | number }} / {{ q.openInterest | number }}</td>
-                      <td><span class="tag" [class.warn]="q.quality !== 'TwoSided'">{{ qualities[q.quality] }}</span><small>{{ q.source }} · {{ q.observedAtUtc | date:'MM-dd HH:mm':'+0800' }}</small><small>{{ kinds[q.kind] }}</small></td>
-                      <td><button class="link-button" type="button" [disabled]="busy() || !q.ask || q.quality === 'Crossed'" (click)="openSimulation(q)" i18n>模拟</button></td>
+                      <td><span class="tag" [class.warn]="q.quality === 'Crossed' || q.quality === 'Indicative'">{{ qualities[q.quality] }}</span><small>{{ q.source }} · {{ q.observedAtUtc | date:'MM-dd HH:mm':'+0800' }}</small><small>{{ sourceLabel(q.kind, q.tradingDate) }}</small></td>
+                      <td><button class="link-button" type="button" [disabled]="busy() || !(q.settlementPrice ?? q.ask) || q.quality === 'Crossed'" (click)="openSimulation(q)" i18n>模拟</button></td>
                     </tr>
                   } @empty {
                     <tr><td class="empty" colspan="9">
                       @if (marketLoading()) { <span i18n>正在读取行情…</span> }
+                      @else if (official()) { <span i18n>目标交易日尚无匹配的期权。可在数据源管理查看采集状态。</span> }
                       @else { <span i18n>当前视图没有匹配的期权。可在数据源管理中导入。</span> }
                     </td></tr>
                   }
@@ -133,7 +149,7 @@
                             @else { <ng-container i18n>冲击情景未达到目标</ng-container> }
                           </small>
                         </td>
-                        <td><span class="tag" i18n>通过预算与流动性门槛</span><small i18n>IV {{ item.quote.iv | percent:'1.1-2' }} · 价差 {{ item.spreadRatio | percent:'1.1-2' }} · 量 {{ item.quote.volume }} / 仓 {{ item.quote.openInterest }}</small><small>{{ qualities[item.quote.quality] }} · {{ item.quote.source }} · {{ kinds[item.quote.kind] }}</small></td>
+                        <td><span class="tag" i18n>通过预算与流动性门槛</span><small i18n>IV {{ item.quote.iv | percent:'1.1-2' }} · 价差 {{ (item.spreadRatio | percent:'1.1-2') ?? '—' }} · 量 {{ item.quote.volume }} / 仓 {{ item.quote.openInterest }}</small><small>{{ qualities[item.quote.quality] }} · {{ item.quote.source }} · {{ sourceLabel(item.quote.kind, item.quote.tradingDate) }}</small></td>
                         <td><button class="link-button" type="button" [disabled]="busy()" (click)="openSimulation(item.quote)" i18n>模拟</button></td>
                       </tr>
                     } @empty { <tr><td class="empty" colspan="6" i18n>没有满足当前条件的合约。</td></tr> }
@@ -149,7 +165,7 @@
             <div class="form-grid">
               <label i18n>期权合约
                 <select [ngModel]="selected()?.id ?? null" [disabled]="busy()" (ngModelChange)="selectById($event)">
-                  <option [ngValue]="null">请选择有效卖价合约</option>
+                  <option [ngValue]="null">请选择具有研究价格的合约</option>
                   @for (q of quotable(); track q.id) { <option [ngValue]="q.id">{{ q.symbol }} · {{ q.exchange }}</option> }
                 </select>
               </label>
@@ -159,7 +175,7 @@
               <label i18n>目标净回收倍数（逗号分隔）<input [(ngModel)]="targets"></label>
             </div>
             @if (selected(); as q) {
-              <p class="muted" i18n>{{ q.symbol }} · {{ kinds[q.kind] }} · 权利金 ¥{{ q.premium | number }} · 开仓 ¥{{ q.openFee | number }} / 平仓 ¥{{ q.closeFee | number }} / 行权 ¥{{ q.exerciseFee | number }}</p>
+              <p class="muted" i18n>{{ q.symbol }} · {{ sourceLabel(q.kind, q.tradingDate) }} · 参考权利金 ¥{{ q.premium | number }} · 开仓 ¥{{ q.openFee | number }} / 平仓 ¥{{ q.closeFee | number }} / 行权 ¥{{ q.exerciseFee | number }}</p>
             }
             <button class="primary" type="button" [disabled]="!selected() || busy()" (click)="runSimulation()" i18n>计算情景</button>
           </section>
@@ -200,8 +216,10 @@
               <label i18n>最高 IV（小数）<input type="number" min="0" max="5" step="0.01" [(ngModel)]="settings.maxIv"></label>
               <label i18n>最低成交量（手）<input type="number" min="0" [(ngModel)]="settings.minVolume"></label>
               <label i18n>最低持仓量（手）<input type="number" min="0" [(ngModel)]="settings.minOpenInterest"></label>
-              <label i18n>最大相对价差（小数）<input type="number" min="0" max="1" step="0.01" [(ngModel)]="settings.maxSpreadRatio"></label>
-              <label i18n>行情最大年龄（天）<input type="number" min="1" max="365" [(ngModel)]="settings.maxAgeDays"></label>
+              @if (!official()) {
+                <label i18n>最大相对价差（小数）<input type="number" min="0" max="1" step="0.01" [(ngModel)]="settings.maxSpreadRatio"></label>
+                <label i18n>行情最大年龄（天）<input type="number" min="1" max="365" [(ngModel)]="settings.maxAgeDays"></label>
+              }
               <label i18n>有利方向冲击幅度（小数）<input type="number" min="0" max="1" step="0.01" [(ngModel)]="settings.shock"></label>
             </div>
             <div class="actions">
@@ -211,7 +229,19 @@
           </section>
         }
         @case ('sources') {
-          <p class="subtitle" i18n>只导入你有权用于研究的行情。来源类型为上传方申报，批次会保留观测及导入时间。</p>
+          <section class="card">
+            <h2 i18n>官方日行情采集</h2>
+            <p><strong>{{ dailyMessage() }}</strong></p>
+            <p class="muted" i18n>浏览、刷新和运行扫描只读取本地数据库。采集会按交易日复用已缓存的官方文件。</p>
+            @if (daily(); as status) {
+              @if (status.offline) { <p class="muted" i18n>离线文件模式</p> }
+              @if (status.failure) { <p class="muted">{{ status.failure }}</p> }
+              @if (status.retryAfterUtc) {
+                <p class="muted" i18n>最早重试（北京时间）{{ status.retryAfterUtc | date:'yyyy-MM-dd HH:mm':'+0800' }}</p>
+              }
+            }
+          </section>
+          <p class="subtitle" i18n>只导入你有权用于研究的行情。CSV 来源类型为上传方申报。</p>
           <section class="card">
             <h2 i18n>导入期权链 CSV</h2>
             <div class="form-grid">
@@ -235,12 +265,12 @@
           <section class="card">
             <h2 i18n>最近导入批次</h2>
             <div class="table-wrap">
-              <table><thead><tr><th i18n>来源</th><th i18n>来源类型</th><th i18n>观测时间</th><th i18n>导入时间</th><th i18n>行数</th></tr></thead>
+              <table><thead><tr><th i18n>来源</th><th i18n>来源类型</th><th i18n>交易日</th><th i18n>观测时间</th><th i18n>导入时间</th><th i18n>行数</th></tr></thead>
                 <tbody>@for (batch of batches(); track batch.id) {
-                  <tr><td><b>{{ batch.source }}</b></td><td>{{ kinds[batch.kind] }}</td>
+                  <tr><td><b>{{ batch.source }}</b></td><td>{{ sourceLabel(batch.kind, batch.tradingDate) }}</td><td>{{ batch.tradingDate ?? '—' }}</td>
                     <td>{{ batch.observedAtUtc | date:'yyyy-MM-dd HH:mm:ss':'+0800' }}</td>
                     <td>{{ batch.importedAtUtc | date:'yyyy-MM-dd HH:mm:ss':'+0800' }}</td><td>{{ batch.count }}</td></tr>
-                } @empty { <tr><td class="empty" colspan="5" i18n>还没有导入批次。</td></tr> }</tbody>
+                } @empty { <tr><td class="empty" colspan="6" i18n>还没有导入批次。</td></tr> }</tbody>
               </table>
             </div>
           </section>

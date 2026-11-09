@@ -2,6 +2,7 @@
 [Oo]bj/
 .idea/
 .qa/
+.exchange-cache/
 .vs/
 .angular/
 node_modules/

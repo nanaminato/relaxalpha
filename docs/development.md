@@ -7,8 +7,8 @@
 | `src/RelaxAlpha.Domain` | 行情批次、期权合约、质量状态、单手成本 |
 | `src/RelaxAlpha.Quant` | Black-76、Greeks、隐含波动率、目标情景 |
 | `src/RelaxAlpha.Application` | 行情查询、扫描、模拟用例与数据接口 |
-| `src/RelaxAlpha.Infrastructure` | CSV 数据源、EF Core 持久化与两套迁移 |
-| `src/RelaxAlpha.Worker` | Quartz 计划扫描，保存进程内最近结果 |
+| `src/RelaxAlpha.Infrastructure` | 官方日行情和 CSV 数据源、EF Core 持久化与两套迁移 |
+| `src/RelaxAlpha.Worker` | Quartz 日行情采集与计划扫描，保存进程内最近结果 |
 | `src/RelaxAlpha.Api` | ASP.NET Core REST、SignalR、依赖装配和静态前端托管 |
 | `web` | Angular Dashboard、策略表单、情景模拟与数据管理 |
 | `tests/RelaxAlpha.Tests` | xUnit 定价、目标反算、SQLite 迁移和导入/筛选测试 |
@@ -26,6 +26,23 @@ dotnet tool restore
 dotnet ef migrations add ChangeNameSqlite --project src/RelaxAlpha.Infrastructure --startup-project src/RelaxAlpha.Api --context SqliteMarketDatabase --output-dir Migrations/Sqlite
 dotnet ef migrations add ChangeNamePostgres --project src/RelaxAlpha.Infrastructure --startup-project src/RelaxAlpha.Api --context PostgresMarketDatabase --output-dir Migrations/Postgres
 ```
+
+## 官方日行情采集与离线调试
+
+Compose 默认启用联网采集，直接运行 API 时默认关闭。任务启动时和之后每小时检查一次北京时间的上一交易日，跳过周末及已发布的休市日。内置日历覆盖 2026 年；后续年度可根据上期所公告配置 `ExchangeDaily:CalendarThrough` 和 `ExchangeDaily:AdditionalClosures`，例如通过环境变量 `ExchangeDaily__CalendarThrough`、`ExchangeDaily__AdditionalClosures__0` 传入 ISO 日期。超出覆盖日期时停止采集并在界面提示。 [上期所休市安排](https://www.shfe.com.cn/services/calenderandholidays/holiday/)
+
+采集以「数据源 + 交易日」持久化任务记录，并在请求前声明本次尝试。每个交易日成功入库后，无论刷新、扫描、重启还是同数据库的并发实例，均复用本地数据。未完成任务至少间隔六小时才重试，每份有效原文件收到后立即保存，重试只补尚未保存的文件。采集状态可在「数据源管理」或 `GET /api/sources/daily` 查看。开发、测试与业务查询均可在断网时使用。
+
+要复用已下载的原始文件，在启动 API 前设置 `ExchangeDaily__Enabled=true` 和 `ExchangeDaily__OfflineDirectory` 为文件所在目录。离线模式只读文件，遇到缺失或无效文件会记录失败。Compose 联网模式优先读取项目下的 `.exchange-cache/`，只有缺少本地文件才请求官网。直接运行 API 可用 `ExchangeDaily__SeedDirectory` 指向同一目录。将同一个交易日的文件按以下名称保存。表中 `YYYYMMDD` 为北京时间交易日。
+
+| 文件名 | 上期所官网路径 |
+| --- | --- |
+| `futures-YYYYMMDD.dat` | `/data/tradedata/future/dailydata/kxYYYYMMDD.dat` |
+| `options-YYYYMMDD.dat` | `/data/tradedata/option/dailydata/kxYYYYMMDD.dat` |
+| `contracts-YYYYMMDD.dat` | `/data/busiparamdata/option/ContractBaseInfoYYYYMMDD.dat` |
+| `fees-YYYYMMDD.dat` | `/data/busiparamdata/option/SettlementYYYYMMDD.dat` |
+
+保留数据库卷即可保留原文件及尝试记录；每套独立数据库各有自己的缓存。测试使用代码内样本和假的 HTTP 处理程序。原始官方文件不纳入版本控制。 [上期所日周数据](https://www.shfe.com.cn/reports/tradedata/) · [业务参数汇总](https://www.shfe.com.cn/reports/businessdata/prmsummary/)
 
 ## CSV 数据契约
 
@@ -57,8 +74,9 @@ DCE,DEMO-M-C-3400,DEMO-M,2027-01-07T15:00:00+08:00,C,3400,3100,10,2,2,2,17,20,13
 | 方法与路径 | 用途 |
 | --- | --- |
 | `GET /api/health` | 应用启动检查 |
-| `GET /api/market?simulated=false` | 当前未到期期权链及 IV |
-| `GET /api/sources` | 最近 100 个导入批次 |
+| `GET /api/market?universe=OfficialDaily` | 默认读取上一交易日官方期权链及 IV。也可选 `Imported` 或 `Simulated` |
+| `GET /api/sources` | 最近 100 个入库批次 |
+| `GET /api/sources/daily` | 本地采集状态、目标交易日和重试时间 |
 | `POST /api/sources/import?source=...&kind=...&observedAt=...` | 请求体为 CSV，URL 编码查询参数，观测时间用 ISO 8601 |
 | `POST /api/sources/demo` | 发送 JSON 请求体 `{}`，显式载入模拟数据 |
 | `POST /api/scans` | JSON 策略扫描，传 `{}` 使用默认条件 |
@@ -82,8 +100,8 @@ DCE,DEMO-M-C-3400,DEMO-M,2027-01-07T15:00:00+08:00,C,3400,3100,10,2,2,2,17,20,13
   "maxSpreadRatio": 0.3,
   "maxAgeDays": 3,
   "shock": 0.1,
-  "simulated": false
+  "universe": "OfficialDaily"
 }
 ```
 
-当前策略在页面会话内编辑并提交。Quartz 每五分钟以默认策略扫描非模拟行情，结果保存在内存，重启后重新计算。扩展采集时可实现应用层数据源接口，继续使用批次、来源分类和质量规则。
+当前策略在页面会话内编辑并提交。Quartz 每五分钟以默认策略扫描官方日行情，结果保存在内存，重启后重新计算。旧调用可继续通过 `simulated=false` 显式读取导入行情，或通过 `simulated=true` 读取模拟行情。

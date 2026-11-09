@@ -1,6 +1,7 @@
 .git
 .idea
 .qa
+.exchange-cache
 **/bin
 **/obj
 **/node_modules
