@@ -22,7 +22,7 @@ var connection = builder.Configuration.GetConnectionString("Market");
 if (provider.Equals("Sqlite", StringComparison.OrdinalIgnoreCase))
 {
     builder.Services.AddDbContext<MarketDatabase, SqliteMarketDatabase>(o =>
-        o.UseSqlite(connection ?? "Data Source=relaxalpha.db"));
+        o.UseSqlite(connection ?? MarketDatabase.DefaultSqliteConnection));
 }
 else if (provider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
 {
@@ -89,7 +89,7 @@ api.MapLiveQuotes();
 api.MapGet("/health", () => TypedResults.Ok(new { status = "ok" }));
 api.MapGet("/market", async (MarketUniverse? universe, bool? simulated, MarketResearch research, CancellationToken ct) =>
 {
-    var selection = new ScanSettings { Universe = universe, Simulated = simulated }.SelectedUniverse;
+    var selection = ScanSettings.Resolve(universe, simulated);
     if (!Enum.IsDefined(selection)) return Results.Problem("无效的行情范围。", statusCode: 400);
     var quotes = await research.LatestAsync(selection, ct);
     return Results.Ok(quotes.Select(MarketQuote.From).ToArray());
@@ -99,6 +99,8 @@ api.MapGet("/sources", async (IMarketStore store, CancellationToken ct) =>
 api.MapGet("/sources/daily", async (IExchangeDailyIngestion daily, CancellationToken ct) =>
     TypedResults.Ok(await daily.StatusAsync(ct)));
 api.MapGet("/scans/scheduled", (ScheduledScan scan) => TypedResults.Ok(scan.Latest));
+// 默认策略由后端定义，前端表单与"恢复默认"都以此为准。
+api.MapGet("/scans/defaults", () => TypedResults.Ok(new ScanSettings()));
 api.MapPost("/scans", async (ScanSettings settings, MarketResearch research, CancellationToken ct) =>
 {
     try { return Results.Ok(await research.ScanAsync(settings, ct)); }

@@ -8,6 +8,8 @@ namespace RelaxAlpha.Infrastructure;
 
 public abstract class MarketDatabase(DbContextOptions options) : DbContext(options)
 {
+    public const string DefaultSqliteConnection = "Data Source=relaxalpha.db";
+
     public DbSet<ImportBatch> Batches => Set<ImportBatch>();
     public DbSet<OptionQuote> Quotes => Set<OptionQuote>();
     public DbSet<OfficialDailyImport> DailyImports => Set<OfficialDailyImport>();

@@ -106,7 +106,7 @@ public sealed class CsvMarketDataSource(TimeProvider time) : IMarketDataSource
         decimal Number(int i, bool positive = false)
         {
             if (!decimal.TryParse(f[i], NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value) ||
-                value > 1_000_000_000 || (positive && value <= 0))
+                value > MarketLimits.MaxAmount || (positive && value <= 0))
                 throw new FormatException($"数值不合法：{Header.Split(',')[i]}。");
             return value;
         }

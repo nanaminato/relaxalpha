@@ -5,6 +5,12 @@ public enum SourceKind { UserProvided, ExchangePublic, Licensed, Simulated }
 public enum QuoteQuality { TwoSided, Indicative, Crossed, DailySettlement }
 public enum MarketUniverse { OfficialDaily, Imported, Simulated }
 
+// 价格、预算等金额的统一上限，供 CSV、交易所文件和 API 入参校验共用。
+public static class MarketLimits
+{
+    public const decimal MaxAmount = 1_000_000_000m;
+}
+
 public sealed class ImportBatch
 {
     public Guid Id { get; init; } = Guid.NewGuid();

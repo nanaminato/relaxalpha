@@ -1,6 +1,4 @@
 using System.Text;
-using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
 using RelaxAlpha.Application;
 using RelaxAlpha.Domain;
 using RelaxAlpha.Infrastructure;
@@ -16,11 +14,8 @@ public sealed class MarketFlowTests
     [Fact]
     public async Task MigratesImportsDeduplicatesAndFiltersSeparateUniverses()
     {
-        await using var connection = new SqliteConnection("Data Source=:memory:");
-        await connection.OpenAsync();
-        await using var db = new SqliteMarketDatabase(new DbContextOptionsBuilder<SqliteMarketDatabase>()
-            .UseSqlite(connection).Options);
-        await db.Database.MigrateAsync();
+        await using var database = await TestDatabase.CreateAsync();
+        await using var db = database.Create();
         var store = new EfMarketStore(db);
         var research = new MarketResearch(store, clock, new(ExchangeTradingCalendar.PublishedThrough, []));
         var parser = new CsvMarketDataSource(clock);
@@ -69,10 +64,8 @@ public sealed class MarketFlowTests
     [Fact]
     public async Task LatestSelectionUsesObservationTimeRatherThanImportOrder()
     {
-        await using var db = new SqliteMarketDatabase(new DbContextOptionsBuilder<SqliteMarketDatabase>()
-            .UseSqlite("Data Source=:memory:").Options);
-        await db.Database.OpenConnectionAsync();
-        await db.Database.MigrateAsync();
+        await using var database = await TestDatabase.CreateAsync();
+        await using var db = database.Create();
         var store = new EfMarketStore(db);
         var parser = new CsvMarketDataSource(clock);
         var recent = new SourceInfo("来源 A", SourceKind.Licensed, Now);

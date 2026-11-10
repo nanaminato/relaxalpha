@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using RelaxAlpha.Domain;
 using RelaxAlpha.Quant;
 
@@ -47,7 +48,11 @@ public sealed record ScanSettings
     public double Shock { get; init; } = 0.1;
     public bool? Simulated { get; init; }
     public MarketUniverse? Universe { get; init; }
-    public MarketUniverse SelectedUniverse => Universe ?? (Simulated switch
+    // 派生属性只服务于服务端逻辑，不进入请求或响应契约。
+    [JsonIgnore]
+    public MarketUniverse SelectedUniverse => Resolve(Universe, Simulated);
+
+    public static MarketUniverse Resolve(MarketUniverse? universe, bool? simulated) => universe ?? (simulated switch
     {
         true => MarketUniverse.Simulated,
         false => MarketUniverse.Imported,
@@ -56,8 +61,8 @@ public sealed record ScanSettings
 
     public void Validate()
     {
-        if (!Enum.IsDefined(SelectedUniverse) || Budget is <= 0 or > 1_000_000_000 || !(TargetMultiple is >= 1 and <= 1000) ||
-            MinDays < 0 || MaxDays < MinDays || MaxDays > 730 ||
+        if (!Enum.IsDefined(SelectedUniverse) || Budget is <= 0 or > MarketLimits.MaxAmount ||
+            !(TargetMultiple is >= 1 and <= 1000) || MinDays < 0 || MaxDays < MinDays || MaxDays > 730 ||
             !(MinIv >= 0 && MaxIv >= MinIv && MaxIv <= Black76.MaxVolatility) ||
             MinVolume < 0 || MinOpenInterest < 0 || MaxSpreadRatio is < 0 or > 1 ||
             MaxAgeDays is < 1 or > 365 || !(Shock is >= 0 and <= 1))
@@ -128,7 +133,7 @@ public sealed class MarketResearch(IMarketStore store, TimeProvider time, Exchan
         var remaining = (quote.ExpiryUtc - time.GetUtcNow().UtcDateTime).TotalDays;
         var targets = input.Targets ?? [2, 5, 10];
         if (quote.EntryPrice is not > 0 || quote.Quality == QuoteQuality.Crossed ||
-            !(input.FuturesPrice is >= 0 and <= 1_000_000_000) ||
+            !(input.FuturesPrice >= 0 && input.FuturesPrice <= (double)MarketLimits.MaxAmount) ||
             !(input.RemainingDays >= 0 && input.RemainingDays <= Math.Min(730, remaining)) ||
             !(input.Volatility is >= 0 and <= Black76.MaxVolatility) ||
             targets.Length > 20 || targets.Any(x => !(x is >= 1 and <= 1000)))

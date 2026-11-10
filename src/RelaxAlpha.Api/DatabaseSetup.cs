@@ -7,7 +7,8 @@ namespace RelaxAlpha.Api;
 public sealed class SqliteDesignFactory : IDesignTimeDbContextFactory<SqliteMarketDatabase>
 {
     public SqliteMarketDatabase CreateDbContext(string[] args) =>
-        new(new DbContextOptionsBuilder<SqliteMarketDatabase>().UseSqlite("Data Source=relaxalpha.db").Options);
+        new(new DbContextOptionsBuilder<SqliteMarketDatabase>()
+            .UseSqlite(MarketDatabase.DefaultSqliteConnection).Options);
 }
 
 public sealed class PostgresDesignFactory : IDesignTimeDbContextFactory<PostgresMarketDatabase>

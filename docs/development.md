@@ -98,6 +98,7 @@ DCE,DEMO-M-C-3400,DEMO-M,2027-01-07T15:00:00+08:00,C,3400,3100,10,2,2,2,17,20,13
 | `POST /api/sources/demo` | 发送 JSON 请求体 `{}`，显式载入模拟数据 |
 | `POST /api/scans` | JSON 策略扫描，传 `{}` 使用默认条件 |
 | `GET /api/scans/scheduled` | Quartz 最近一次默认扫描，尚未完成时返回空结果 |
+| `GET /api/scans/defaults` | 默认策略定义，前端表单初始值与「恢复默认」以此为准 |
 | `POST /api/simulate` | 接受 `quoteId`、`futuresPrice`、`remainingDays`、`volatility`、可选 `targets` |
 | `/hubs/market` | SignalR Hub，成功导入后发送 `MarketUpdated` 批次通知 |
 
@@ -121,4 +122,4 @@ DCE,DEMO-M-C-3400,DEMO-M,2027-01-07T15:00:00+08:00,C,3400,3100,10,2,2,2,17,20,13
 }
 ```
 
-当前策略在页面会话内编辑并提交。Quartz 每五分钟以默认策略扫描官方日行情，结果保存在内存，重启后重新计算。旧调用可继续通过 `simulated=false` 显式读取导入行情，或通过 `simulated=true` 读取模拟行情。
+当前策略在页面会话内编辑并提交，表单初始值与「恢复默认」读取 `GET /api/scans/defaults`，默认值只在后端定义一份。Quartz 每五分钟以默认策略扫描官方日行情，结果保存在内存，重启后重新计算。旧调用可继续通过 `simulated=false` 显式读取导入行情，或通过 `simulated=true` 读取模拟行情。

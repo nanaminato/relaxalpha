@@ -56,7 +56,7 @@ public sealed class ShfeDailyReports(HttpClient http, ExchangeDailyOptions optio
             data = await response.Content.ReadAsByteArrayAsync(ct);
         }
 
-        using var document = Open(data, report, day);
+        Validate(data, report, day);
         return data;
     }
 
@@ -69,7 +69,7 @@ public sealed class ShfeDailyReports(HttpClient http, ExchangeDailyOptions optio
         using var fees = Open(files.Fees!, Fees, day);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         foreach (var file in new[] { files.Futures!, files.Options!, files.Contracts!, files.Fees! })
-            hash.AppendData(SHA256.HashData(file));
+            hash.AppendData(file);
 
         var observed = day.ToDateTime(new TimeOnly(7, 0), DateTimeKind.Utc);
         var batch = new ImportBatch
@@ -133,26 +133,53 @@ public sealed class ShfeDailyReports(HttpClient http, ExchangeDailyOptions optio
 
     private static JsonDocument Open(byte[] data, Report report, DateOnly day)
     {
-        JsonDocument document;
+        Validate(data, report, day);
+        return JsonDocument.Parse(WithoutBom(data));
+    }
+
+    // 流式校验报告日期与数据行，避免为校验再构建一份完整的 JSON 文档。
+    private static void Validate(ReadOnlyMemory<byte> data, Report report, DateOnly day)
+    {
+        var expected = DayText(day);
+        var dateMatches = false;
+        var rowsPresent = false;
         try
         {
-            var json = data.AsMemory();
-            if (json.Span.StartsWith(new byte[] { 0xEF, 0xBB, 0xBF })) json = json[3..];
-            document = JsonDocument.Parse(json);
+            var reader = new Utf8JsonReader(WithoutBom(data).Span);
+            while (reader.Read())
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 1) continue;
+                if (reader.ValueTextEquals("report_date"u8))
+                {
+                    reader.Read();
+                    dateMatches = reader.TokenType switch
+                    {
+                        JsonTokenType.String => reader.GetString() == expected,
+                        JsonTokenType.Number => reader.TryGetInt64(out var value) &&
+                            value == long.Parse(expected, CultureInfo.InvariantCulture),
+                        _ => false
+                    };
+                }
+                else if (reader.ValueTextEquals(report.Rows.AsSpan()))
+                {
+                    rowsPresent = reader.Read() && reader.TokenType == JsonTokenType.StartArray &&
+                        reader.Read() && reader.TokenType != JsonTokenType.EndArray;
+                }
+            }
         }
         catch (JsonException e)
         {
             throw new InvalidDataException($"官方文件 {report.OfflineName(day)} 不是有效的 JSON。", e);
         }
 
-        var root = document.RootElement;
-        if (Text(root, "report_date") == DayText(day) && root.TryGetProperty(report.Rows, out var rows) &&
-            rows.ValueKind == JsonValueKind.Array && rows.GetArrayLength() > 0)
-            return document;
-
-        document.Dispose();
-        throw new InvalidDataException($"官方文件 {report.OfflineName(day)} 的日期不符或没有数据。");
+        if (!dateMatches || !rowsPresent)
+            throw new InvalidDataException($"官方文件 {report.OfflineName(day)} 的日期不符或没有数据。");
     }
+
+    private static ReadOnlyMemory<byte> WithoutBom(ReadOnlyMemory<byte> data) =>
+        data.Span.StartsWith(Utf8Bom) ? data[3..] : data;
+
+    private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
 
     private static string DayText(DateOnly day) => day.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
 
@@ -168,7 +195,7 @@ public sealed class ShfeDailyReports(HttpClient http, ExchangeDailyOptions optio
 
     private static decimal? Number(JsonElement row, string key) =>
         decimal.TryParse(Text(row, key), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var value) &&
-        value <= 1_000_000_000 ? value : null;
+        value <= MarketLimits.MaxAmount ? value : null;
 
     private static int? Count(JsonElement row, string key) =>
         int.TryParse(Text(row, key), NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value : null;

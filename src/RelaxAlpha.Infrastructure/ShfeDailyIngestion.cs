@@ -10,6 +10,16 @@ public sealed class ShfeDailyIngestion(
     private const string Feed = "SHFE";
     private static readonly TimeSpan RetryDelay = TimeSpan.FromHours(6);
 
+    // 每份原文件独立下载并立即持久化，重试只补缺失的文件。
+    private static readonly (ShfeDailyReports.Report Report, Func<OfficialDailyImport, byte[]?> Get,
+        Action<OfficialDailyImport, byte[]> Set)[] SourceFiles =
+    [
+        (ShfeDailyReports.Futures, x => x.Futures, (x, value) => x.Futures = value),
+        (ShfeDailyReports.Options, x => x.Options, (x, value) => x.Options = value),
+        (ShfeDailyReports.Contracts, x => x.Contracts, (x, value) => x.Contracts = value),
+        (ShfeDailyReports.Fees, x => x.Fees, (x, value) => x.Fees = value)
+    ];
+
     public async Task<BatchSummary?> CollectAsync(CancellationToken ct)
     {
         var now = clock.GetUtcNow().UtcDateTime;
@@ -20,24 +30,10 @@ public sealed class ShfeDailyIngestion(
         var cached = await Day(day).SingleAsync(ct);
         try
         {
-            if (cached.Futures is null)
+            foreach (var (report, get, set) in SourceFiles)
             {
-                cached.Futures = await reports.ReadAsync(ShfeDailyReports.Futures, day, ct);
-                await db.SaveChangesAsync(ct);
-            }
-            if (cached.Options is null)
-            {
-                cached.Options = await reports.ReadAsync(ShfeDailyReports.Options, day, ct);
-                await db.SaveChangesAsync(ct);
-            }
-            if (cached.Contracts is null)
-            {
-                cached.Contracts = await reports.ReadAsync(ShfeDailyReports.Contracts, day, ct);
-                await db.SaveChangesAsync(ct);
-            }
-            if (cached.Fees is null)
-            {
-                cached.Fees = await reports.ReadAsync(ShfeDailyReports.Fees, day, ct);
+                if (get(cached) is not null) continue;
+                set(cached, await reports.ReadAsync(report, day, ct));
                 await db.SaveChangesAsync(ct);
             }
 

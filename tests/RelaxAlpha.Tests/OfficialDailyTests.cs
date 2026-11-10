@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using RelaxAlpha.Application;
 using RelaxAlpha.Domain;
@@ -29,15 +28,7 @@ public sealed class OfficialDailyTests
     public async Task FailedReportIsRetriedWithoutDownloadingSuccessfulFilesAgain()
     {
         var ct = CancellationToken.None;
-        var connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = Guid.NewGuid().ToString("N"), Mode = SqliteOpenMode.Memory, Cache = SqliteCacheMode.Shared, Pooling = false
-        }.ToString();
-        await using var keeper = new SqliteConnection(connectionString);
-        await keeper.OpenAsync(ct);
-        var dbOptions = new DbContextOptionsBuilder<SqliteMarketDatabase>().UseSqlite(connectionString).Options;
-        await using (var db = new SqliteMarketDatabase(dbOptions))
-            await db.Database.MigrateAsync(ct);
+        await using var database = await TestDatabase.CreateAsync();
 
         using var handler = new FixtureHandler();
         using var http = new HttpClient(handler);
@@ -46,11 +37,11 @@ public sealed class OfficialDailyTests
         ShfeDailyIngestion Service(MarketDatabase db, ExchangeDailyOptions settings) =>
             new(db, new EfMarketStore(db), new ShfeDailyReports(http, settings), settings, Calendar, clock);
 
-        await using (var db = new SqliteMarketDatabase(dbOptions))
+        await using (var db = database.Create())
             Assert.Null(await Service(db, new()).CollectAsync(ct));
         Assert.Empty(handler.Requests);
 
-        await using (var db = new SqliteMarketDatabase(dbOptions))
+        await using (var db = database.Create())
         {
             var service = Service(db, enabled);
             await Assert.ThrowsAsync<HttpRequestException>(() => service.CollectAsync(ct));
@@ -61,13 +52,13 @@ public sealed class OfficialDailyTests
             Assert.Equal(Monday.AddHours(6), status.RetryAfterUtc);
         }
 
-        await using (var db = new SqliteMarketDatabase(dbOptions))
+        await using (var db = database.Create())
             Assert.Null(await Service(db, enabled).CollectAsync(ct));
         Assert.Equal(2, handler.Requests.Count);
 
         clock.Now = Monday.AddHours(6);
-        await using (var first = new SqliteMarketDatabase(dbOptions))
-        await using (var second = new SqliteMarketDatabase(dbOptions))
+        await using (var first = database.Create())
+        await using (var second = database.Create())
         {
             var results = await Task.WhenAll(Service(first, enabled).CollectAsync(ct), Service(second, enabled).CollectAsync(ct));
             Assert.Single(results.OfType<BatchSummary>());
@@ -75,7 +66,15 @@ public sealed class OfficialDailyTests
         Assert.Equal(5, handler.Requests.Count);
         Assert.Equal(1, handler.Requests.Count(path => path.Contains("/future/", StringComparison.Ordinal)));
 
-        await using (var db = new SqliteMarketDatabase(dbOptions))
+        // 清空入库结果但保留原文件缓存：再次采集只重建批次，不重新下载。
+        await using (var db = database.Create())
+            await db.DailyImports.ExecuteUpdateAsync(u => u.SetProperty(x => x.BatchId, (Guid?)null)
+                .SetProperty(x => x.RetryAfterUtc, Monday));
+        await using (var db = database.Create())
+            Assert.NotNull(await Service(db, enabled).CollectAsync(ct));
+        Assert.Equal(5, handler.Requests.Count);
+
+        await using (var db = database.Create())
         {
             var service = Service(db, enabled);
             Assert.Null(await service.CollectAsync(ct));
@@ -108,6 +107,30 @@ public sealed class OfficialDailyTests
         }
 
         Assert.Equal(5, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData("""{"report_date":20261105,"o_curinstrument":[{"PRODUCTID":"rb_f"}]}""")]
+    [InlineData("""{"report_date":"20261106","o_curinstrument":[]}""")]
+    [InlineData(@"{""report_date"":""20261106"",""o_curinstrument"":[{""PRODUCTID"":")]
+    [InlineData("""<html>系统维护中</html>""")]
+    public async Task InvalidOfficialFilesAreRejectedWithoutTouchingTheCache(string payload)
+    {
+        var ct = CancellationToken.None;
+        await using var database = await TestDatabase.CreateAsync();
+        using var http = new HttpClient(new StaticHandler(payload));
+        var clock = new MutableClock();
+        var settings = new ExchangeDailyOptions { Enabled = true };
+        await using var db = database.Create();
+
+        var service = new ShfeDailyIngestion(db, new EfMarketStore(db), new ShfeDailyReports(http, settings),
+            settings, Calendar, clock);
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.CollectAsync(ct));
+
+        var status = await service.StatusAsync(ct);
+        Assert.Null(status.BatchId);
+        Assert.NotNull(status.Failure);
+        Assert.Null((await db.DailyImports.SingleAsync(ct)).Futures);
     }
 
     private sealed class MutableClock : TimeProvider
@@ -164,5 +187,14 @@ public sealed class OfficialDailyTests
                 Content = new StringContent(data, Encoding.UTF8, "application/json")
             });
         }
+    }
+
+    private sealed class StaticHandler(string payload) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            });
     }
 }
