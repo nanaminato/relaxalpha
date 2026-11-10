@@ -17,6 +17,7 @@ public sealed class ExchangeDailyOptions
 public sealed class ShfeDailyReports(HttpClient http, ExchangeDailyOptions options)
 {
     public const string Source = "上期所官网日行情";
+    public const string Name = "上期所";
     public const string BaseUrl = "https://www.shfe.com.cn";
     public const int MaxFileBytes = 8 * 1024 * 1024;
     private static readonly HashSet<string> IneProducts = new(StringComparer.OrdinalIgnoreCase) { "bc", "sc", "lu", "nr" };

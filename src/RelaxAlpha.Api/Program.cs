@@ -48,7 +48,19 @@ builder.Services.AddHttpClient<ShfeDailyReports>(http =>
     http.MaxResponseContentBufferSize = ShfeDailyReports.MaxFileBytes;
     http.DefaultRequestHeaders.UserAgent.ParseAdd("RelaxAlpha/0.1");
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-builder.Services.AddScoped<IExchangeDailyIngestion, ShfeDailyIngestion>();
+var czceOptions = builder.Configuration.GetSection("CzceDaily").Get<CzceDailyOptions>() ?? new();
+builder.Services.AddSingleton(czceOptions);
+builder.Services.AddHttpClient<CzceDailyReports>(http =>
+{
+    http.Timeout = TimeSpan.FromSeconds(60);
+    http.MaxResponseContentBufferSize = CzceDailyReports.MaxFileBytes;
+    http.DefaultRequestHeaders.UserAgent.ParseAdd("RelaxAlpha/0.1");
+});
+builder.Services.AddScoped<DailyImportLedger>();
+builder.Services.AddScoped<ShfeDailyIngestion>();
+builder.Services.AddScoped<CzceDailyIngestion>();
+builder.Services.AddScoped<IExchangeDailyIngestion>(services => services.GetRequiredService<ShfeDailyIngestion>());
+builder.Services.AddScoped<IExchangeDailyIngestion>(services => services.GetRequiredService<CzceDailyIngestion>());
 var liveUrl = builder.Configuration["LiveQuotes:Url"];
 builder.Services.AddHttpClient<TqQuoteFeed>(http =>
 {
@@ -64,7 +76,7 @@ builder.Services.AddQuartz(q =>
     q.AddTrigger(o => o.ForJob(key).WithIdentity("market-scan-5min").StartNow()
         .WithSimpleSchedule(s => s.WithIntervalInMinutes(5).RepeatForever()));
 
-    if (dailyOptions.Enabled)
+    if (dailyOptions.Enabled || czceOptions.Enabled)
     {
         var dailyKey = new JobKey("exchange-daily");
         q.AddJob<ExchangeDailyJob>(o => o.WithIdentity(dailyKey));
@@ -96,8 +108,8 @@ api.MapGet("/market", async (MarketUniverse? universe, bool? simulated, MarketRe
 });
 api.MapGet("/sources", async (IMarketStore store, CancellationToken ct) =>
     TypedResults.Ok(await store.SourcesAsync(ct)));
-api.MapGet("/sources/daily", async (IExchangeDailyIngestion daily, CancellationToken ct) =>
-    TypedResults.Ok(await daily.StatusAsync(ct)));
+api.MapGet("/sources/daily", async (IEnumerable<IExchangeDailyIngestion> feeds, CancellationToken ct) =>
+    TypedResults.Ok(await Task.WhenAll(feeds.Select(feed => feed.StatusAsync(ct)))));
 api.MapGet("/scans/scheduled", (ScheduledScan scan) => TypedResults.Ok(scan.Latest));
 // 默认策略由后端定义，前端表单与"恢复默认"都以此为准。
 api.MapGet("/scans/defaults", () => TypedResults.Ok(new ScanSettings()));

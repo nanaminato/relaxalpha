@@ -32,7 +32,16 @@
     <div class="content">
       <h1>{{ title() }}</h1>
       @if (official()) {
-        <p class="banner"><strong>{{ dailyMessage() }}</strong> · <ng-container i18n>上期所官网日文件，含能源中心品种。结算价只用于研究估算，日文件不提供买卖盘口。</ng-container></p>
+        <p class="banner">
+          <span class="daily-states">
+            @for (feed of daily(); track feed.source) {
+              <span [class.warn]="feed.failure || !feed.tradingDate"><strong>{{ feed.name }}</strong> {{ dailyState(feed) }} {{ feed.tradingDate ?? '' }}</span>
+            } @empty {
+              <span i18n>正在读取日行情状态…</span>
+            }
+          </span>
+          <ng-container i18n>官方日文件只提供结算价，不含买卖盘口；结算价仅用于研究估算。</ng-container>
+        </p>
       }
       @if (universe() === 'Simulated') { <p class="banner demo" i18n>模拟数据视图。演示价格、合约与筛选结果均为虚构。</p> }
       @if (marketError()) { <p class="banner error" role="alert">{{ marketError() }}</p> }
@@ -367,15 +376,26 @@
         @case ('sources') {
           <section class="card">
             <h2 i18n>官方日行情采集</h2>
-            <p><strong>{{ dailyMessage() }}</strong></p>
-            <p class="muted" i18n>浏览、刷新和运行扫描只读取本地数据库。采集会按交易日复用已缓存的官方文件。</p>
-            @if (daily(); as status) {
-              @if (status.offline) { <p class="muted" i18n>离线文件模式</p> }
-              @if (status.failure) { <p class="muted">{{ status.failure }}</p> }
-              @if (status.retryAfterUtc) {
-                <p class="muted" i18n>最早重试（北京时间）{{ status.retryAfterUtc | date:'yyyy-MM-dd HH:mm':'+0800' }}</p>
-              }
-            }
+            <p class="muted" i18n>浏览、刷新和运行扫描只读取本地数据库。采集会按交易日复用已缓存的官方文件，每个交易所独立记录重试时间。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th i18n>交易所</th><th i18n>目标交易日</th><th i18n>状态</th><th i18n>最近尝试</th><th i18n>最早重试</th><th i18n>失败原因</th></tr></thead>
+                <tbody>
+                  @for (feed of daily(); track feed.source) {
+                    <tr>
+                      <td><b>{{ feed.name }}</b>@if (feed.offline) { <small i18n>离线文件模式</small> }</td>
+                      <td>{{ feed.tradingDate ?? '—' }}</td>
+                      <td><span class="tag" [class.warn]="feed.failure || !feed.tradingDate">{{ dailyState(feed) }}</span></td>
+                      <td>{{ (feed.lastAttemptUtc | date:'MM-dd HH:mm':'+0800') ?? '—' }}</td>
+                      <td>{{ (feed.retryAfterUtc | date:'MM-dd HH:mm':'+0800') ?? '—' }}</td>
+                      <td>{{ feed.failure ?? '—' }}</td>
+                    </tr>
+                  } @empty {
+                    <tr><td class="empty" colspan="6" i18n>正在读取采集状态…</td></tr>
+                  }
+                </tbody>
+              </table>
+            </div>
           </section>
           <p class="subtitle" i18n>只导入你有权用于研究的行情。CSV 来源类型为上传方申报。</p>
           <section class="card">

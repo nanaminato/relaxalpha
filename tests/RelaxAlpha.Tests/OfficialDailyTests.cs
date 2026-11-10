@@ -35,7 +35,8 @@ public sealed class OfficialDailyTests
         var clock = new MutableClock();
         var enabled = new ExchangeDailyOptions { Enabled = true };
         ShfeDailyIngestion Service(MarketDatabase db, ExchangeDailyOptions settings) =>
-            new(db, new EfMarketStore(db), new ShfeDailyReports(http, settings), settings, Calendar, clock);
+            new(db, new EfMarketStore(db), new ShfeDailyReports(http, settings), settings, Calendar, clock,
+                new DailyImportLedger(db));
 
         await using (var db = database.Create())
             Assert.Null(await Service(db, new()).CollectAsync(ct));
@@ -124,7 +125,7 @@ public sealed class OfficialDailyTests
         await using var db = database.Create();
 
         var service = new ShfeDailyIngestion(db, new EfMarketStore(db), new ShfeDailyReports(http, settings),
-            settings, Calendar, clock);
+            settings, Calendar, clock, new DailyImportLedger(db));
         await Assert.ThrowsAsync<InvalidDataException>(() => service.CollectAsync(ct));
 
         var status = await service.StatusAsync(ct);

@@ -5,7 +5,7 @@ namespace RelaxAlpha.Infrastructure;
 
 public sealed class ShfeDailyIngestion(
     MarketDatabase db, IMarketStore store, ShfeDailyReports reports, ExchangeDailyOptions settings,
-    ExchangeTradingCalendar calendar, TimeProvider clock) : IExchangeDailyIngestion
+    ExchangeTradingCalendar calendar, TimeProvider clock, DailyImportLedger ledger) : IExchangeDailyIngestion
 {
     private const string Feed = "SHFE";
     private static readonly TimeSpan RetryDelay = TimeSpan.FromHours(6);
@@ -24,10 +24,10 @@ public sealed class ShfeDailyIngestion(
     {
         var now = clock.GetUtcNow().UtcDateTime;
         if (!settings.Enabled || calendar.PreviousTradingDay(now) is not { } day ||
-            !await ClaimAsync(day, now, ct))
+            !await ledger.ClaimAsync(Feed, day, now, RetryDelay, ct))
             return null;
 
-        var cached = await Day(day).SingleAsync(ct);
+        var cached = await ledger.Day(Feed, day).SingleAsync(ct);
         try
         {
             foreach (var (report, get, set) in SourceFiles)
@@ -39,51 +39,19 @@ public sealed class ShfeDailyIngestion(
 
             var batch = await store.SaveAsync(ShfeDailyReports.BuildBatch(cached, clock.GetUtcNow().UtcDateTime), ct);
             // A restart between the two saves can rebuild the batch from cache; SaveAsync deduplicates it.
-            await Day(day).ExecuteUpdateAsync(u => u.SetProperty(x => x.BatchId, batch.Id).SetProperty(x => x.Failure, (string?)null), ct);
+            await ledger.CompleteAsync(Feed, day, batch.Id, ct);
             return batch;
         }
         catch (Exception e) when (!ct.IsCancellationRequested &&
             e is HttpRequestException or OperationCanceledException or IOException or InvalidDataException or ArgumentException)
         {
-            var detail = e.Message.Length <= 300 ? e.Message : e.Message[..300];
-            await Day(day).ExecuteUpdateAsync(u => u.SetProperty(x => x.Failure, detail), ct);
+            await ledger.FailAsync(Feed, day, e.Message, ct);
             throw;
         }
     }
 
-    public async Task<ExchangeDailyStatus> StatusAsync(CancellationToken ct)
-    {
-        var day = calendar.PreviousTradingDay(clock.GetUtcNow().UtcDateTime);
-        var cached = day is { } date ? await Day(date).Select(x => new { x.BatchId, x.LastAttemptUtc, x.RetryAfterUtc, x.Failure })
-            .SingleOrDefaultAsync(ct) : null;
-        return new(settings.Enabled, !string.IsNullOrWhiteSpace(settings.OfflineDirectory), day, cached?.BatchId,
-            cached?.LastAttemptUtc, cached?.BatchId is null ? cached?.RetryAfterUtc : null, cached?.Failure);
-    }
-
-    private IQueryable<OfficialDailyImport> Day(DateOnly day) =>
-        db.DailyImports.Where(x => x.Source == Feed && x.TradingDate == day);
-
-    private async Task<bool> ClaimAsync(DateOnly day, DateTime now, CancellationToken ct)
-    {
-        var retryAfter = now.Add(RetryDelay);
-        if (await Day(day).Where(x => x.BatchId == null && x.RetryAfterUtc <= now).ExecuteUpdateAsync(u => u
-            .SetProperty(x => x.LastAttemptUtc, now).SetProperty(x => x.RetryAfterUtc, retryAfter)
-            .SetProperty(x => x.Failure, (string?)null), ct) == 1)
-            return true;
-
-        if (await Day(day).AnyAsync(ct)) return false;
-        var added = new OfficialDailyImport { Source = Feed, TradingDate = day, LastAttemptUtc = now, RetryAfterUtc = retryAfter };
-        db.DailyImports.Add(added);
-        try
-        {
-            await db.SaveChangesAsync(ct);
-            return true;
-        }
-        catch (DbUpdateException)
-        {
-            db.Entry(added).State = EntityState.Detached;
-            if (await Day(day).AnyAsync(ct)) return false;
-            throw;
-        }
-    }
+    public Task<ExchangeDailyStatus> StatusAsync(CancellationToken ct) =>
+        ledger.StatusAsync(Feed, ShfeDailyReports.Name, settings.Enabled,
+            !string.IsNullOrWhiteSpace(settings.OfflineDirectory),
+            calendar.PreviousTradingDay(clock.GetUtcNow().UtcDateTime), ct);
 }

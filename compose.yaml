@@ -7,6 +7,8 @@ services:
       Database__Provider: Sqlite
       ExchangeDaily__Enabled: "${RELAXALPHA_EXCHANGE_DAILY:-true}"
       ExchangeDaily__SeedDirectory: /exchange-seed
+      CzceDaily__Enabled: "${RELAXALPHA_CZCE_DAILY:-true}"
+      CzceDaily__SeedDirectory: /exchange-seed
       ConnectionStrings__Market: Data Source=/data/relaxalpha.db
     volumes:
       - sqlite:/data

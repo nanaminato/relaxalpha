@@ -87,16 +87,8 @@ class Dashboard {
   readonly quotes = signal<Quote[]>([]);
   readonly batches = signal<Batch[]>([]);
   readonly scheduled = signal<Scan | null>(null);
-  readonly daily = signal<DailyStatus | null>(null);
-  readonly dailyMessage = computed(() => {
-    const daily = this.daily();
-    if (!daily) return $localize`正在读取日行情状态…`;
-    if (!daily.tradingDate) return $localize`当前日期超出已配置的交易日历。`;
-    if (daily.batchId) return $localize`已入库 · ${daily.tradingDate}:date:`;
-    if (!daily.enabled) return $localize`采集已关闭 · 目标交易日 ${daily.tradingDate}:date:`;
-    if (daily.failure) return $localize`采集失败，等待下次重试 · ${daily.tradingDate}:date:`;
-    return $localize`等待入库 · ${daily.tradingDate}:date:`;
-  });
+  readonly daily = signal<DailyStatus[]>([]);
+  readonly dailyFailed = computed(() => this.daily().filter(feed => feed.failure));
   readonly scan = signal<Scan | null>(null);
   readonly simulation = signal<Simulation | null>(null);
   readonly selected = signal<Quote | null>(null);
@@ -324,6 +316,14 @@ class Dashboard {
 
   sourceLabel(kind: SourceKind, tradingDate: string | null) {
     return tradingDate ? $localize`官方日行情` : this.kinds[kind];
+  }
+
+  dailyState(feed: DailyStatus) {
+    if (!feed.tradingDate) return $localize`超出已配置的交易日历`;
+    if (feed.batchId) return $localize`已入库`;
+    if (!feed.enabled) return $localize`采集已关闭`;
+    if (feed.failure) return $localize`采集失败，等待重试`;
+    return $localize`等待入库`;
   }
 
   selectById(id: number | null) {

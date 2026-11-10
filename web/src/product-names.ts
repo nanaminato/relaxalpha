@@ -32,7 +32,7 @@ const products: Readonly<Record<string, Readonly<Record<string, string>>>> = {
     RM: $localize`菜籽粕`, OI: $localize`菜籽油`, PK: $localize`花生`, SH: $localize`烧碱`,
     PX: $localize`对二甲苯`, PF: $localize`短纤`, SA: $localize`纯碱`, SF: $localize`硅铁`,
     SM: $localize`锰硅`, FG: $localize`玻璃`, PR: $localize`瓶片`, AP: $localize`苹果`,
-    CJ: $localize`红枣`, UR: $localize`尿素`
+    CJ: $localize`红枣`, UR: $localize`尿素`, PL: $localize`丙烯`
   },
   GFEX: {
     SI: $localize`工业硅`, LC: $localize`碳酸锂`, PS: $localize`多晶硅`,

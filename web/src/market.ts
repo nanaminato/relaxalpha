@@ -44,6 +44,8 @@ export interface Batch {
   tradingDate: string | null;
 }
 export interface DailyStatus {
+  source: string;
+  name: string;
   enabled: boolean;
   offline: boolean;
   tradingDate: string | null;
@@ -132,7 +134,7 @@ export class MarketApi {
     return firstValueFrom(this.http.get<Batch[]>('/api/sources'));
   }
   daily() {
-    return firstValueFrom(this.http.get<DailyStatus>('/api/sources/daily'));
+    return firstValueFrom(this.http.get<DailyStatus[]>('/api/sources/daily'));
   }
   scheduled() {
     return firstValueFrom(this.http.get<Scan | null>('/api/scans/scheduled'));

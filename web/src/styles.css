@@ -60,6 +60,9 @@ h2 { margin: 0 0 12px; font-size: 18px; }
 .secondary:hover:enabled { background: #f1f5fa; }
 .link-button { padding: 5px 8px; color: var(--green); background: #eaf7f2; }
 .banner { color: #145741; border: 1px solid #c1e6d8; background: #eaf7f0; border-radius: 8px; padding: 10px 13px; }
+.daily-states { display: inline-flex; flex-wrap: wrap; gap: 4px 16px; margin-right: 8px; }
+.daily-states span { white-space: nowrap; }
+.daily-states .warn { color: #8a5a00; }
 .banner.demo { color: #714700; border-color: #ebd4a8; background: #fff7e5; }
 .banner.error { color: #8d2928; border-color: #efc5c3; background: #fff1f0; }
 .table-wrap { overflow-x: auto; }
