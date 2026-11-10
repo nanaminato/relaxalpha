@@ -44,7 +44,18 @@ export function exchangeName(exchange: string): string {
   return exchanges[exchange] ?? exchange;
 }
 
+// 行情对象在会话内不可变，按对象缓存解析结果，避免大列表重复跑正则与查表。
+const resolved = new WeakMap<object, string>();
+
 export function productName(quote: Pick<Quote, 'exchange' | 'underlying' | 'kind'>): string {
+  const cached = resolved.get(quote);
+  if (cached !== undefined) return cached;
+  const name = resolveName(quote);
+  resolved.set(quote, name);
+  return name;
+}
+
+function resolveName(quote: Pick<Quote, 'exchange' | 'underlying' | 'kind'>): string {
   const underlying = quote.underlying.toUpperCase();
   const prefix = quote.exchange + '.';
   const code = underlying.startsWith(prefix) ? underlying.slice(prefix.length) : underlying;

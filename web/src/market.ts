@@ -65,6 +65,8 @@ export interface Settings {
   maxSpreadRatio: number;
   maxAgeDays: number;
   shock: number;
+  // 仅出现在 /api/scans 响应中，表示该次扫描使用的行情范围。
+  universe?: MarketUniverse | null;
 }
 export interface Target {
   futuresPrice: number;
@@ -134,6 +136,9 @@ export class MarketApi {
   }
   scheduled() {
     return firstValueFrom(this.http.get<Scan | null>('/api/scans/scheduled'));
+  }
+  defaults() {
+    return firstValueFrom(this.http.get<Settings>('/api/scans/defaults'));
   }
   scan(settings: Settings, universe: MarketUniverse) {
     return firstValueFrom(this.http.post<Scan>('/api/scans', {...settings, universe}));

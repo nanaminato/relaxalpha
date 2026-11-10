@@ -5,7 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { Batch, DailyStatus, LiveQuoteBatch, MarketApi, MarketUniverse, Opportunity, Quality, Quote, Scan, Settings, Simulation, SourceKind } from './market';
-import { browseList, productKey } from './browse-list';
+import { browseList, matchesQuery, productKey } from './browse-list';
 import { exchangeName, productName } from './product-names';
 
 const tabs = [
@@ -17,7 +17,6 @@ const tabs = [
   {id: 'sources', number: '06', name: $localize`数据源管理`},
 ] as const;
 type Tab = typeof tabs[number]['id'];
-type RankingColumn = 'cost' | 'change' | 'multiple';
 type SortDirection = 'ascending' | 'descending';
 
 interface RankingGroup {
@@ -29,16 +28,30 @@ interface RankingGroup {
 type RankingRow = {key: string; kind: 'group'; group: RankingGroup; expanded: boolean}
   | {key: number; kind: 'contract'; item: Opportunity};
 
-const rankingValue: Record<RankingColumn, (item: Opportunity) => number | null> = {
-  cost: item => item.quote.entryCost,
-  change: item => item.target.change,
-  multiple: item => item.shockScenario.multiple
+const rankingColumns = [
+  {column: 'cost', title: $localize`单手资金`, detail: $localize`本金风险`, value: (item: Opportunity) => item.quote.entryCost},
+  {column: 'change', title: $localize`目标涨跌幅`, detail: $localize`目标到期价`, value: (item: Opportunity) => item.target.change},
+  {column: 'multiple', title: $localize`情景净回收倍数`, detail: $localize`情景盈亏`, value: (item: Opportunity) => item.shockScenario.multiple}
+] as const;
+
+type RankingColumn = (typeof rankingColumns)[number]['column'];
+
+// 表头文案与排序取值由同一张表派生，新增列只需改上面的定义。
+const rankingValue = Object.fromEntries(rankingColumns.map(column => [column.column, column.value])) as
+  Record<RankingColumn, (item: Opportunity) => number | null>;
+
+// 默认策略由 GET /api/scans/defaults 提供，避免前后端各写一份默认值。这里只是加载完成前的中性占位。
+const placeholder: Settings = {
+  budget: 0, targetMultiple: 0, minDays: 0, maxDays: 0, side: null, minIv: 0, maxIv: 0,
+  minVolume: 0, minOpenInterest: 0, maxSpreadRatio: 0, maxAgeDays: 0, shock: 0
 };
 
-const defaults: Settings = {
-  budget: 1000, targetMultiple: 5, minDays: 30, maxDays: 90, side: null, minIv: 0, maxIv: 5,
-  minVolume: 10, minOpenInterest: 50, maxSpreadRatio: 0.3, maxAgeDays: 3, shock: 0.1
-};
+// 服务端默认值可能带请求专用字段（universe/simulated），按表单模型的键裁剪后再落到表单。
+const only = <T extends object>(template: T, source: T): T =>
+  Object.fromEntries(Object.keys(template).map(key => [key, source[key as keyof T]])) as T;
+
+// 模拟器下拉一次最多渲染的合约数，避免上万条 option 拖慢页面。
+const MaxContractOptions = 200;
 
 @Component({
   selector: 'ra-app',
@@ -51,6 +64,7 @@ class Dashboard {
     .withAutomaticReconnect().configureLogging(LogLevel.Warning).build();
   private refreshVersion = 0;
   private liveVersion = 0;
+  private pendingQuoteId: number | null = null;
 
   readonly tabs = tabs;
   readonly exchangeName = exchangeName;
@@ -95,14 +109,11 @@ class Dashboard {
   readonly chain = browseList(this.quotes, quote => quote, 30);
   readonly rankingSort = signal<{column: RankingColumn; direction: SortDirection} | null>(null);
   readonly rankingGrouped = signal(false);
+  readonly reachesOnly = signal(false);
   readonly expandedProducts = signal<ReadonlySet<string>>(new Set());
-  readonly rankingHeaders = [
-    {column: 'cost', title: $localize`单手资金`, detail: $localize`本金风险`},
-    {column: 'change', title: $localize`目标涨跌幅`, detail: $localize`目标到期价`},
-    {column: 'multiple', title: $localize`情景净回收倍数`, detail: $localize`情景盈亏`}
-  ] as const;
+  readonly rankingHeaders = rankingColumns;
   readonly ranking = browseList(computed(() => {
-    const items = this.scan()?.opportunities ?? [];
+    const items = (this.scan()?.opportunities ?? []).filter(item => !this.reachesOnly() || item.reachesTarget);
     const sort = this.rankingSort();
     if (!sort) return items;
     const value = rankingValue[sort.column];
@@ -138,7 +149,25 @@ class Dashboard {
     });
   });
   readonly simulationOrigin = signal<'chain' | 'ranking' | null>(null);
-  readonly quotable = computed(() => this.quotes().filter(q => (q.settlementPrice ?? q.ask ?? 0) > 0 && q.quality !== 'Crossed'));
+  readonly canQuote = (quote: Quote) => quote.entryCost != null && quote.quality !== 'Crossed';
+  readonly quotable = computed(() => this.quotes().filter(this.canQuote));
+  readonly contractFilter = signal('');
+  readonly contractMatches = computed(() => {
+    const text = this.contractFilter().trim().toUpperCase();
+    const quotable = this.quotable();
+    const matched = text ? quotable.filter(quote => matchesQuery(quote, text)) : quotable;
+    const items = matched.slice(0, MaxContractOptions);
+    const selected = this.selected();
+    if (selected && quotable.some(item => item.id === selected.id) && !items.some(item => item.id === selected.id))
+      items.unshift(selected);
+    return {items, total: matched.length};
+  });
+  readonly recentHits = computed(() => {
+    if (!this.official()) return [];
+    const scanned = this.scan();
+    const latest = scanned?.settings.universe === this.universe() ? scanned : this.scheduled();
+    return latest?.opportunities.slice(0, 3) ?? [];
+  });
   readonly underlyings = computed(() => new Set(this.quotes().map(q => q.exchange + '/' + q.underlying)).size);
   readonly twoSided = computed(() => this.quotes().filter(q => q.quality === 'TwoSided').length);
   readonly latestQuote = computed(() => this.quotes().reduce((latest, q) =>
@@ -153,7 +182,9 @@ class Dashboard {
     DailySettlement: $localize`日结算参考`
   };
   readonly sides = {Call: $localize`看涨`, Put: $localize`看跌`};
-  settings = {...defaults};
+  readonly defaults = signal<Settings | null>(null);
+  readonly settingsReady = signal(false);
+  settings: Settings = {...placeholder};
   source = '';
   kind: SourceKind = 'UserProvided';
   observedAt = '';
@@ -165,6 +196,20 @@ class Dashboard {
 
   constructor() {
     const destroy = inject(DestroyRef);
+    this.restoreState();
+    const onPopState = () => {
+      this.restoreState();
+      void this.refresh();
+    };
+    window.addEventListener('popstate', onPopState);
+    // Ctrl/Cmd + Enter：模拟器里计算情景，其他页面运行扫描。
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key !== 'Enter') return;
+      event.preventDefault();
+      if (this.active() === 'simulator') void this.runSimulation();
+      else void this.runScan();
+    };
+    window.addEventListener('keydown', onKeyDown);
     this.hub.on('MarketUpdated', () => void this.refresh());
     this.hub.onreconnecting(() => this.connected.set(false));
     this.hub.onclose(() => this.connected.set(false));
@@ -173,7 +218,11 @@ class Dashboard {
       void this.refresh();
     });
     void this.hub.start().then(() => this.connected.set(true), () => this.connected.set(false));
-    destroy.onDestroy(() => void this.hub.stop());
+    destroy.onDestroy(() => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('keydown', onKeyDown);
+      void this.hub.stop();
+    });
     void this.refresh();
   }
 
@@ -181,11 +230,13 @@ class Dashboard {
     this.active.set(tab);
     this.error.set('');
     this.notice.set('');
+    this.syncState(true);
   }
 
   changeUniverse(universe: MarketUniverse) {
     if (universe === this.universe()) return;
     this.selectUniverse(universe);
+    this.syncState(true);
     void this.refresh();
   }
 
@@ -205,6 +256,7 @@ class Dashboard {
     const version = ++this.refreshVersion;
     this.marketLoading.set(true);
     this.marketError.set('');
+    if (!this.settingsReady()) void this.loadSettings();
     try {
       const [quotes, batches, scheduled, daily] = await Promise.all([
         this.api.market(this.universe()), this.api.sources(), this.api.scheduled(), this.api.daily()
@@ -214,6 +266,7 @@ class Dashboard {
       this.batches.set(batches);
       this.scheduled.set(scheduled);
       this.daily.set(daily);
+      this.applyPendingQuote(quotes);
       this.chain.reconcile();
     } catch (error) {
       if (version === this.refreshVersion) this.marketError.set(this.errorText(error));
@@ -243,12 +296,18 @@ class Dashboard {
     });
   }
 
+  toggleReaches() {
+    this.reachesOnly.update(value => !value);
+    this.ranking.goTo(0);
+  }
+
   setAllProductsExpanded(expanded: boolean) {
     this.expandedProducts.set(new Set(expanded ? this.rankingGroups().map(group => group.key) : []));
   }
 
   resetSettings() {
-    this.settings = {...defaults};
+    const defaults = this.defaults();
+    if (defaults) this.settings = only(placeholder, defaults);
   }
 
   async runScan() {
@@ -278,10 +337,14 @@ class Dashboard {
     this.live.set(null);
     this.liveError.set('');
     this.liveBusy.set(false);
-    if (!quote) return;
+    if (!quote) {
+      this.syncState(false);
+      return;
+    }
     this.futuresPrice = quote.futuresPrice;
     this.remainingDays = 0;
     this.volatility = quote.iv ?? 0.25;
+    this.syncState(false);
   }
 
   openSimulation(quote: Quote) {
@@ -362,6 +425,85 @@ class Dashboard {
       this.notice.set($localize`已加载模拟期权链。演示合约仅用于验证研究流程。`);
       await this.refresh();
     });
+  }
+
+  private async loadSettings() {
+    try {
+      const defaults = await this.api.defaults();
+      this.defaults.set(defaults);
+      this.settings = only(placeholder, defaults);
+      this.settingsReady.set(true);
+    } catch (error) {
+      // 保持占位值并提示；下次刷新会重试。
+      this.error.set(this.errorText(error));
+    }
+  }
+
+  // 视图状态写进 hash：刷新后可回到原处，链接也能直接分享（#ranking?universe=Imported&id=12）。
+  private restoreState() {
+    const [tab, query = ''] = location.hash.replace(/^#/, '').split('?');
+    if (this.tabs.some(item => item.id === tab)) this.active.set(tab as Tab);
+    const params = new URLSearchParams(query);
+    const universe = params.get('universe');
+    if (this.universes.some(item => item.id === universe)) this.universe.set(universe as MarketUniverse);
+    const id = Number(params.get('id'));
+    this.pendingQuoteId = Number.isInteger(id) && id > 0 ? id : null;
+    if (this.pendingQuoteId === null) this.selected.set(null);
+  }
+
+  private syncState(push: boolean) {
+    const params = new URLSearchParams();
+    if (this.universe() !== 'OfficialDaily') params.set('universe', this.universe());
+    const selected = this.selected();
+    if (selected) params.set('id', String(selected.id));
+    const query = params.toString();
+    const hash = `#${this.active()}${query ? '?' + query : ''}`;
+    if (location.hash === hash) return;
+    if (push) history.pushState(null, '', hash);
+    else history.replaceState(null, '', hash);
+  }
+
+  private applyPendingQuote(quotes: Quote[]) {
+    const id = this.pendingQuoteId;
+    this.pendingQuoteId = null;
+    if (id === null) return;
+    const quote = quotes.find(item => item.id === id);
+    if (quote) this.selectQuote(quote);
+  }
+
+  daysLeft(quote: Quote) {
+    return Math.max(0, Math.round((Date.parse(quote.expiryUtc) - Date.now()) / 86_400_000));
+  }
+
+  readonly exportChain = () => this.download('option-chain', [
+    ['交易所', '品种', '合约', '方向', '到期 (UTC)', '标的期货价', '行权价', '单手资金', '参考 IV', '成交量', '持仓量', '质量', '来源'],
+    ...this.chain.filtered().map(quote => [exchangeName(quote.exchange), productName(quote), quote.symbol,
+      this.sides[quote.side], quote.expiryUtc, quote.futuresPrice, quote.strike, quote.entryCost, quote.iv,
+      quote.volume, quote.openInterest, this.qualities[quote.quality], quote.source])
+  ]);
+
+  readonly exportRanking = () => this.download('opportunities', [
+    ['品种', '合约', '方向', '到期 (UTC)', '单手资金', '目标期货价', '目标涨跌幅', '情景倍数', '情景盈亏', '相对价差', '参考 IV', '成交量', '持仓量', '来源'],
+    ...this.ranking.filtered().map(item => [productName(item.quote), item.quote.symbol, this.sides[item.quote.side],
+      item.quote.expiryUtc, item.quote.entryCost, item.target.futuresPrice, item.target.change,
+      item.shockScenario.multiple, item.shockScenario.profit, item.spreadRatio, item.quote.iv,
+      item.quote.volume, item.quote.openInterest, item.quote.source])
+  ]);
+
+  private download(name: string, rows: (string | number | null | undefined)[][]) {
+    const body = rows.map(row => row.map(cell => this.csvCell(cell)).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob(['\uFEFF', body], {type: 'text/csv;charset=utf-8'}));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  private csvCell(value: string | number | null | undefined) {
+    if (value === null || value === undefined) return '';
+    const text = String(value);
+    return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
   }
 
   private async perform(action: () => Promise<void>) {

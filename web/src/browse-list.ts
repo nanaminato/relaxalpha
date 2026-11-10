@@ -10,7 +10,20 @@ interface BrowseFilters {
 
 const defaults: BrowseFilters = {search: '', product: '', side: ''};
 const collator = new Intl.Collator('zh-CN', {numeric: true});
-export const productKey = (quote: Quote) => quote.exchange + ':' + productName(quote);
+// 与 productName 共用对象缓存，筛选与分组时不必重复拼串。
+const productKeys = new WeakMap<Quote, string>();
+export const productKey = (quote: Quote) => {
+  const cached = productKeys.get(quote);
+  if (cached !== undefined) return cached;
+  const key = quote.exchange + ':' + productName(quote);
+  productKeys.set(quote, key);
+  return key;
+};
+
+// text 需为大写。浏览筛选与模拟器合约查找共用同一套匹配规则。
+export const matchesQuery = (quote: Quote, text: string) =>
+  !text || [quote.symbol, quote.underlying, quote.exchange, productName(quote), exchangeName(quote.exchange)]
+    .some(label => label.toUpperCase().includes(text));
 
 export function browseList<T>(items: Signal<readonly T[]>, quoteOf: (item: T) => Quote, pageSize: number) {
   const filters = signal(defaults);
@@ -33,8 +46,7 @@ export function browseList<T>(items: Signal<readonly T[]>, quoteOf: (item: T) =>
       const quote = quoteOf(item);
       if (product && productKey(quote) !== product) return false;
       if (side && quote.side !== side) return false;
-      return !text || [quote.symbol, quote.underlying, quote.exchange, productName(quote), exchangeName(quote.exchange)]
-        .some(label => label.toUpperCase().includes(text));
+      return matchesQuery(quote, text);
     });
   });
   const pages = computed(() => Array.from({length: Math.ceil(filtered().length / pageSize)}, (_, index) => index));
